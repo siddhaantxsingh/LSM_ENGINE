@@ -1,0 +1,53 @@
+use crate::sstable::TableOptions;
+
+#[derive(Clone, Debug)]
+pub struct Options {
+    /// Create the database if it doesn't exist.
+    pub create_if_missing: bool,
+    /// Memtable size before it is frozen and flushed to an L0 table.
+    pub write_buffer_size: usize,
+    /// Target size of SSTables produced by compaction.
+    pub target_file_size: u64,
+    /// Number of L0 files that triggers a compaction into L1.
+    pub l0_compaction_trigger: usize,
+    /// Writes are delayed ~1ms each once L0 reaches this many files.
+    pub l0_slowdown_trigger: usize,
+    /// Writes stop until compaction catches up at this many L0 files.
+    pub l0_stop_trigger: usize,
+    /// Max bytes in L1; each deeper level is `level_multiplier` times larger.
+    pub max_bytes_level1: u64,
+    pub level_multiplier: u64,
+    /// Block cache capacity in bytes.
+    pub block_cache_size: usize,
+    /// fsync the WAL on every write (durable across power loss).
+    pub sync: bool,
+    pub table: TableOptions,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options {
+            create_if_missing: true,
+            write_buffer_size: 4 << 20,
+            target_file_size: 2 << 20,
+            l0_compaction_trigger: 4,
+            l0_slowdown_trigger: 8,
+            l0_stop_trigger: 12,
+            max_bytes_level1: 10 << 20,
+            level_multiplier: 10,
+            block_cache_size: 8 << 20,
+            sync: false,
+            table: TableOptions::default(),
+        }
+    }
+}
+
+impl Options {
+    pub fn max_bytes_for_level(&self, level: usize) -> u64 {
+        let mut b = self.max_bytes_level1;
+        for _ in 1..level {
+            b *= self.level_multiplier;
+        }
+        b
+    }
+}
