@@ -27,6 +27,7 @@ mod coding;
 mod compaction;
 mod db;
 mod error;
+pub mod fs;
 mod iterator;
 mod key;
 mod log;

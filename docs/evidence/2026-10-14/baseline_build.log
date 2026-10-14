@@ -1,0 +1,36 @@
+ Downloading crates ...
+  Downloaded zerocopy v0.8.59
+   Compiling libc v0.2.190
+   Compiling cfg-if v1.0.5
+   Compiling getrandom v0.3.4
+   Compiling zerocopy v0.8.59
+   Compiling getrandom v0.4.3
+   Compiling rustix v1.1.5
+   Compiling autocfg v1.5.1
+   Compiling bitflags v2.13.2
+   Compiling linux-raw-sys v0.12.1
+   Compiling crc32fast v1.5.2
+   Compiling num-traits v0.2.19
+   Compiling fastrand v2.5.0
+   Compiling once_cell v1.21.4
+   Compiling rand_core v0.9.5
+   Compiling wait-timeout v0.2.1
+   Compiling fnv v1.0.7
+   Compiling tempfile v3.27.0
+   Compiling quick-error v1.2.3
+   Compiling bit-vec v0.8.0
+   Compiling bit-set v0.8.0
+   Compiling rusty-fork v0.3.1
+   Compiling rand v0.9.5
+   Compiling rand_xorshift v0.4.0
+   Compiling ppv-lite86 v0.2.21
+   Compiling unarray v0.1.4
+   Compiling regex-syntax v0.8.11
+   Compiling lsm-engine v0.1.0 (/home/user/lsm_engine/lsm-engine)
+   Compiling rand_chacha v0.9.0
+   Compiling proptest v1.11.0
+    Finished `release` profile [optimized] target(s) in 52.89s
+
+real	0m52.927s
+user	0m42.965s
+sys	0m5.492s

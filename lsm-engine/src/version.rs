@@ -11,6 +11,7 @@
 use crate::cache::BlockCache;
 use crate::coding::*;
 use crate::error::{Result, corruption};
+use crate::fs::FileSystem;
 use crate::key::*;
 use crate::log::{LogWriter, read_log};
 use crate::sstable::Table;
@@ -36,18 +37,27 @@ pub struct FileMeta {
     pub smallest: Vec<u8>, // internal keys
     pub largest: Vec<u8>,
     path: PathBuf,
+    fs: Arc<dyn FileSystem>,
     table: Mutex<Option<Arc<Table>>>,
     obsolete: AtomicBool,
 }
 
 impl FileMeta {
-    pub fn new(dir: &Path, number: u64, size: u64, smallest: Vec<u8>, largest: Vec<u8>) -> Self {
+    pub fn new(
+        fs: &Arc<dyn FileSystem>,
+        dir: &Path,
+        number: u64,
+        size: u64,
+        smallest: Vec<u8>,
+        largest: Vec<u8>,
+    ) -> Self {
         FileMeta {
             number,
             size,
             smallest,
             largest,
             path: table_path(dir, number),
+            fs: fs.clone(),
             table: Mutex::new(None),
             obsolete: AtomicBool::new(false),
         }
@@ -59,7 +69,12 @@ impl FileMeta {
         if let Some(t) = &*t {
             return Ok(t.clone());
         }
-        let table = Arc::new(Table::open(&self.path, self.number, Some(cache.clone()))?);
+        let table = Arc::new(Table::open(
+            &*self.fs,
+            &self.path,
+            self.number,
+            Some(cache.clone()),
+        )?);
         *t = Some(table.clone());
         Ok(table)
     }
@@ -79,7 +94,7 @@ impl FileMeta {
 impl Drop for FileMeta {
     fn drop(&mut self) {
         if self.obsolete.load(Ordering::SeqCst) {
-            let _ = std::fs::remove_file(&self.path);
+            let _ = self.fs.remove_file(&self.path);
         }
     }
 }
@@ -234,7 +249,7 @@ impl Version {
             .collect()
     }
 
-    fn apply(&self, edit: &VersionEdit, dir: &Path) -> Version {
+    fn apply(&self, edit: &VersionEdit, fs: &Arc<dyn FileSystem>, dir: &Path) -> Version {
         let mut v = self.clone();
         // A file that is both deleted and added (trivial move to the next
         // level) is moved, not recreated: marking it obsolete would delete
@@ -256,7 +271,7 @@ impl Version {
         }
         for (level, num, size, sm, lg) in &edit.added {
             let meta = moved.remove(num).unwrap_or_else(|| {
-                Arc::new(FileMeta::new(dir, *num, *size, sm.clone(), lg.clone()))
+                Arc::new(FileMeta::new(fs, dir, *num, *size, sm.clone(), lg.clone()))
             });
             v.levels[*level].push(meta);
         }
@@ -279,6 +294,7 @@ impl Version {
 /// Holds the current Version plus the MANIFEST writer and counters.
 pub struct VersionSet {
     dir: PathBuf,
+    fs: Arc<dyn FileSystem>,
     pub current: Arc<Version>,
     pub next_file: u64,
     pub last_seq: SeqNum,
@@ -289,9 +305,10 @@ pub struct VersionSet {
 }
 
 impl VersionSet {
-    pub fn new(dir: &Path) -> Self {
+    pub fn new(fs: Arc<dyn FileSystem>, dir: &Path) -> Self {
         VersionSet {
             dir: dir.to_path_buf(),
+            fs,
             current: Arc::new(Version::default()),
             next_file: 2,
             last_seq: 0,
@@ -310,9 +327,10 @@ impl VersionSet {
 
     /// Replays the MANIFEST named by CURRENT.
     pub fn recover(&mut self) -> Result<()> {
-        let cur = std::fs::read_to_string(self.dir.join("CURRENT"))?;
+        let cur = self.fs.read(&self.dir.join("CURRENT"))?;
+        let cur = String::from_utf8_lossy(&cur);
         let name = cur.trim();
-        let (records, _) = read_log(&self.dir.join(name))?;
+        let (records, _) = read_log(&*self.fs, &self.dir.join(name))?;
         let mut v = Version::default();
         for r in records {
             let e = VersionEdit::decode(&r)?;
@@ -328,7 +346,7 @@ impl VersionSet {
             for (l, k) in &e.compact_pointers {
                 self.compact_pointers[*l] = k.clone();
             }
-            v = v.apply(&e, &self.dir);
+            v = v.apply(&e, &self.fs, &self.dir);
         }
         // Files deleted by a replayed edit are marked obsolete by apply();
         // if a crash left them on disk they are removed once dropped here.
@@ -340,7 +358,7 @@ impl VersionSet {
     /// state, then atomically points CURRENT at it.
     pub fn write_new_manifest(&mut self) -> Result<()> {
         let num = self.new_file_number();
-        let mut w = LogWriter::create(&manifest_path(&self.dir, num))?;
+        let mut w = LogWriter::create(&*self.fs, &manifest_path(&self.dir, num))?;
         let mut snap = VersionEdit {
             log_number: Some(self.log_number),
             next_file: Some(self.next_file),
@@ -366,10 +384,12 @@ impl VersionSet {
         w.add_record(&snap.encode())?;
         w.flush(true)?;
         let tmp = self.dir.join("CURRENT.tmp");
-        std::fs::write(&tmp, format!("MANIFEST-{num:06}\n"))?;
-        std::fs::File::open(&tmp)?.sync_all()?;
-        std::fs::rename(&tmp, self.dir.join("CURRENT"))?;
-        std::fs::File::open(&self.dir)?.sync_all()?;
+        let mut f = self.fs.create(&tmp)?;
+        f.append(format!("MANIFEST-{num:06}\n").as_bytes())?;
+        f.sync()?;
+        drop(f);
+        self.fs.rename(&tmp, &self.dir.join("CURRENT"))?;
+        self.fs.sync_dir(&self.dir)?;
         self.manifest = Some(w);
         self.manifest_number = num;
         Ok(())
@@ -378,7 +398,7 @@ impl VersionSet {
     /// Applies an edit in memory only (used during recovery, before the
     /// fresh MANIFEST that will contain it is written).
     pub fn apply_in_memory(&mut self, edit: &VersionEdit) {
-        self.current = Arc::new(self.current.apply(edit, &self.dir));
+        self.current = Arc::new(self.current.apply(edit, &self.fs, &self.dir));
     }
 
     /// Durably records `edit` and installs the resulting version.
@@ -395,7 +415,7 @@ impl VersionSet {
         for (l, k) in &edit.compact_pointers {
             self.compact_pointers[*l] = k.clone();
         }
-        self.current = Arc::new(self.current.apply(&edit, &self.dir));
+        self.current = Arc::new(self.current.apply(&edit, &self.fs, &self.dir));
         Ok(())
     }
 }

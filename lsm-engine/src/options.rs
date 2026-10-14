@@ -1,4 +1,6 @@
+use crate::fs::{FileSystem, StdFs};
 use crate::sstable::TableOptions;
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -22,6 +24,8 @@ pub struct Options {
     /// fsync the WAL on every write (durable across power loss).
     pub sync: bool,
     pub table: TableOptions,
+    /// File system used for every file. Defaults to the real one.
+    pub fs: Arc<dyn FileSystem>,
 }
 
 impl Default for Options {
@@ -38,6 +42,7 @@ impl Default for Options {
             block_cache_size: 8 << 20,
             sync: false,
             table: TableOptions::default(),
+            fs: Arc::new(StdFs),
         }
     }
 }

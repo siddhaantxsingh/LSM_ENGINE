@@ -16,13 +16,13 @@ use crate::bloom::{self, BloomBuilder};
 use crate::cache::BlockCache;
 use crate::coding::*;
 use crate::error::{Result, corruption};
+use crate::fs::{FileSystem, RandomAccessFile, WritableFile};
 use crate::iterator::InternalIterator;
 use crate::key::{cmp_internal, user_key};
-use std::fs::File;
-use std::io::{BufWriter, Write};
-use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::sync::Arc;
+
+const WRITE_BUFFER: usize = 256 << 10;
 
 const MAGIC: u64 = 0x4c534d5f53535442; // "LSM_SSTB"
 const FOOTER_LEN: usize = 40;
@@ -45,7 +45,8 @@ impl Default for TableOptions {
 }
 
 pub struct TableBuilder {
-    w: BufWriter<File>,
+    file: Box<dyn WritableFile>,
+    buf: Vec<u8>,
     opts: TableOptions,
     offset: u64,
     data: BlockBuilder,
@@ -58,10 +59,10 @@ pub struct TableBuilder {
 }
 
 impl TableBuilder {
-    pub fn create(path: &Path, opts: TableOptions) -> Result<Self> {
-        let f = File::create(path)?;
+    pub fn create(fs: &dyn FileSystem, path: &Path, opts: TableOptions) -> Result<Self> {
         Ok(TableBuilder {
-            w: BufWriter::with_capacity(256 << 10, f),
+            file: fs.create(path)?,
+            buf: Vec::with_capacity(WRITE_BUFFER),
             opts,
             offset: 0,
             data: BlockBuilder::new(opts.restart_interval),
@@ -96,11 +97,13 @@ impl TableBuilder {
 
     fn write_block(&mut self, block: &[u8]) -> Result<(u64, u64)> {
         let off = self.offset;
-        self.w.write_all(block)?;
-        let mut crc = Vec::with_capacity(4);
-        put_u32(&mut crc, crc32fast::hash(block));
-        self.w.write_all(&crc)?;
+        self.buf.extend_from_slice(block);
+        put_u32(&mut self.buf, crc32fast::hash(block));
         self.offset += block.len() as u64 + 4;
+        if self.buf.len() >= WRITE_BUFFER {
+            self.file.append(&self.buf)?;
+            self.buf.clear();
+        }
         Ok((off, block.len() as u64))
     }
 
@@ -133,23 +136,24 @@ impl TableBuilder {
         for v in [foff, fsize, ioff, isize, MAGIC] {
             put_u64(&mut footer, v);
         }
-        self.w.write_all(&footer)?;
+        self.buf.extend_from_slice(&footer);
         self.offset += FOOTER_LEN as u64;
-        self.w.flush()?;
-        self.w.get_ref().sync_all()?;
+        self.file.append(&self.buf)?;
+        self.buf.clear();
+        self.file.sync()?;
         Ok(self.offset)
     }
 }
 
 pub struct Table {
-    file: File,
+    file: Arc<dyn RandomAccessFile>,
     file_number: u64,
     index: Block,
     filter: Vec<u8>,
     cache: Option<Arc<BlockCache>>,
 }
 
-fn read_block(file: &File, off: u64, size: u64) -> Result<Vec<u8>> {
+fn read_block(file: &dyn RandomAccessFile, off: u64, size: u64) -> Result<Vec<u8>> {
     let mut buf = vec![0u8; size as usize + 4];
     file.read_exact_at(&mut buf, off)?;
     let crc = get_u32(&buf[size as usize..]);
@@ -161,9 +165,14 @@ fn read_block(file: &File, off: u64, size: u64) -> Result<Vec<u8>> {
 }
 
 impl Table {
-    pub fn open(path: &Path, file_number: u64, cache: Option<Arc<BlockCache>>) -> Result<Table> {
-        let file = File::open(path)?;
-        let len = file.metadata()?.len();
+    pub fn open(
+        fs: &dyn FileSystem,
+        path: &Path,
+        file_number: u64,
+        cache: Option<Arc<BlockCache>>,
+    ) -> Result<Table> {
+        let file = fs.open(path)?;
+        let len = file.len();
         if len < FOOTER_LEN as u64 {
             return corruption("table too short");
         }
@@ -174,8 +183,8 @@ impl Table {
         }
         let (foff, fsize) = (get_u64(&footer[0..]), get_u64(&footer[8..]));
         let (ioff, isize) = (get_u64(&footer[16..]), get_u64(&footer[24..]));
-        let filter = read_block(&file, foff, fsize)?;
-        let index = Block::new(Arc::new(read_block(&file, ioff, isize)?))?;
+        let filter = read_block(&*file, foff, fsize)?;
+        let index = Block::new(Arc::new(read_block(&*file, ioff, isize)?))?;
         Ok(Table {
             file,
             file_number,
@@ -194,7 +203,7 @@ impl Table {
         {
             return Block::new(b);
         }
-        let data = Arc::new(read_block(&self.file, off, size)?);
+        let data = Arc::new(read_block(&*self.file, off, size)?);
         if let Some(c) = &self.cache {
             c.insert(key, data.clone());
         }
@@ -305,6 +314,7 @@ impl InternalIterator for TableIterator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::StdFs;
     use crate::key::{Kind, make_internal_key};
 
     #[test]
@@ -312,6 +322,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("1.sst");
         let mut b = TableBuilder::create(
+            &StdFs,
             &p,
             TableOptions {
                 block_size: 256,
@@ -325,7 +336,7 @@ mod tests {
         }
         b.finish().unwrap();
         let cache = Arc::new(BlockCache::new(1 << 20));
-        let t = Arc::new(Table::open(&p, 1, Some(cache.clone())).unwrap());
+        let t = Arc::new(Table::open(&StdFs, &p, 1, Some(cache.clone())).unwrap());
 
         let (k, v) = t
             .get(&make_internal_key(b"k002500", 9, Kind::Put))
@@ -357,7 +368,7 @@ mod tests {
     fn detects_corruption() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("2.sst");
-        let mut b = TableBuilder::create(&p, TableOptions::default()).unwrap();
+        let mut b = TableBuilder::create(&StdFs, &p, TableOptions::default()).unwrap();
         for i in 0..100u32 {
             b.add(
                 &make_internal_key(format!("k{i:03}").as_bytes(), 1, Kind::Put),
@@ -369,7 +380,7 @@ mod tests {
         let mut data = std::fs::read(&p).unwrap();
         data[10] ^= 0xff;
         std::fs::write(&p, &data).unwrap();
-        let t = Table::open(&p, 2, None).unwrap();
+        let t = Table::open(&StdFs, &p, 2, None).unwrap();
         assert!(matches!(
             t.get(&make_internal_key(b"k000", 9, Kind::Put)),
             Err(crate::Error::Corruption(_))

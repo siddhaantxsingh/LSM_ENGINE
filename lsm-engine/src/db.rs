@@ -122,9 +122,10 @@ fn parse_file_name(name: &str) -> Option<(u64, &str)> {
 impl Db {
     pub fn open(dir: impl AsRef<Path>, opts: Options) -> Result<Db> {
         let dir = dir.as_ref().to_path_buf();
-        std::fs::create_dir_all(&dir)?;
-        let mut versions = VersionSet::new(&dir);
-        let exists = dir.join("CURRENT").exists();
+        let fs = opts.fs.clone();
+        fs.create_dir_all(&dir)?;
+        let mut versions = VersionSet::new(fs.clone(), &dir);
+        let exists = fs.exists(&dir.join("CURRENT"));
         if exists {
             versions.recover()?;
         } else if !opts.create_if_missing {
@@ -136,10 +137,10 @@ impl Db {
         let cache = Arc::new(BlockCache::new(opts.block_cache_size));
 
         // Replay WAL files that weren't flushed before the crash, in order.
-        let mut logs: Vec<u64> = std::fs::read_dir(&dir)?
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let name = e.file_name().into_string().ok()?;
+        let mut logs: Vec<u64> = fs
+            .list_dir(&dir)?
+            .into_iter()
+            .filter_map(|name| {
                 let (n, ext) = parse_file_name(&name)?;
                 (ext == "log" && n >= versions.log_number).then_some(n)
             })
@@ -148,7 +149,7 @@ impl Db {
         let mut edit = VersionEdit::default();
         for &n in &logs {
             versions.next_file = versions.next_file.max(n + 1);
-            let (records, _clean) = read_log(&log_path(&dir, n))?;
+            let (records, _clean) = read_log(&*fs, &log_path(&dir, n))?;
             let mem = MemTable::new();
             for r in records {
                 let (base, count) =
@@ -165,7 +166,7 @@ impl Db {
         }
 
         let wal_number = versions.new_file_number();
-        let wal = LogWriter::create(&log_path(&dir, wal_number))?;
+        let wal = LogWriter::create(&*fs, &log_path(&dir, wal_number))?;
         // Install recovered tables and the new log number in a fresh MANIFEST.
         versions.log_number = wal_number;
         if !edit.added.is_empty() {
@@ -407,7 +408,7 @@ fn write_level0(
     mem: &MemTable,
     num: u64,
 ) -> Result<(u64, Vec<u8>, Vec<u8>)> {
-    let mut b = TableBuilder::create(&table_path(dir, num), opts.table)?;
+    let mut b = TableBuilder::create(&*opts.fs, &table_path(dir, num), opts.table)?;
     let mut it = mem.iter();
     it.seek_to_first();
     while it.valid() {
@@ -582,7 +583,7 @@ impl Inner {
     /// Freezes the active memtable and starts a new WAL file.
     fn switch_memtable<'a>(&'a self, mut st: Guard<'a>) -> Result<Guard<'a>> {
         let num = st.versions.new_file_number();
-        let new_wal = LogWriter::create(&log_path(&self.dir, num))?;
+        let new_wal = LogWriter::create(&*self.opts.fs, &log_path(&self.dir, num))?;
         {
             let mut wal = self.wal.lock().unwrap();
             wal.flush(true)?; // old log fully durable before we stop writing it
@@ -739,7 +740,7 @@ impl Inner {
             Ok(o) => o,
             Err(e) => {
                 for n in nums {
-                    let _ = std::fs::remove_file(table_path(&self.dir, n));
+                    let _ = self.opts.fs.remove_file(&table_path(&self.dir, n));
                 }
                 return Err((st, e));
             }
@@ -776,13 +777,12 @@ impl Inner {
 
     fn delete_obsolete_logs(&self, st: &State) {
         let keep_from = st.versions.log_number;
-        if let Ok(rd) = std::fs::read_dir(&self.dir) {
-            for e in rd.flatten() {
-                if let Some(name) = e.file_name().to_str()
-                    && let Some((n, "log")) = parse_file_name(name)
+        if let Ok(names) = self.opts.fs.list_dir(&self.dir) {
+            for name in names {
+                if let Some((n, "log")) = parse_file_name(&name)
                     && n < keep_from
                 {
-                    let _ = std::fs::remove_file(e.path());
+                    let _ = self.opts.fs.remove_file(&self.dir.join(&name));
                 }
             }
         }
@@ -800,11 +800,8 @@ impl Inner {
             .flatten()
             .map(|f| f.number)
             .collect();
-        if let Ok(rd) = std::fs::read_dir(&self.dir) {
-            for e in rd.flatten() {
-                let Some(name) = e.file_name().to_str().map(|s| s.to_string()) else {
-                    continue;
-                };
+        if let Ok(names) = self.opts.fs.list_dir(&self.dir) {
+            for name in names {
                 let remove = if let Some((n, ext)) = parse_file_name(&name) {
                     match ext {
                         "sst" => !live.contains(&n),
@@ -820,7 +817,7 @@ impl Inner {
                     false
                 };
                 if remove {
-                    let _ = std::fs::remove_file(e.path());
+                    let _ = self.opts.fs.remove_file(&self.dir.join(&name));
                 }
             }
         }

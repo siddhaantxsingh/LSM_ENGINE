@@ -77,7 +77,7 @@ fn crash_writer(dir: &str) {
     let db = Db::open(dir, opts).unwrap();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    for i in 0u64.. {
+    for i in 0u64..u64::MAX {
         let mut b = WriteBatch::new();
         let k = format!("key{i:010}");
         b.put(

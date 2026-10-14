@@ -6,49 +6,47 @@
 //! so dropping it is safe.
 
 use crate::coding::*;
-use std::fs::{File, OpenOptions};
-use std::io::{self, BufWriter, Read, Write};
+use crate::fs::{FileSystem, WritableFile};
+use std::io;
 use std::path::Path;
 
 pub struct LogWriter {
-    w: BufWriter<File>,
+    file: Box<dyn WritableFile>,
+    buf: Vec<u8>,
 }
 
 impl LogWriter {
-    pub fn create(path: &Path) -> io::Result<Self> {
-        let f = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(path)?;
+    pub fn create(fs: &dyn FileSystem, path: &Path) -> io::Result<Self> {
         Ok(LogWriter {
-            w: BufWriter::with_capacity(64 << 10, f),
+            file: fs.create(path)?,
+            buf: Vec::with_capacity(64 << 10),
         })
     }
 
     pub fn add_record(&mut self, payload: &[u8]) -> io::Result<()> {
-        let mut hdr = Vec::with_capacity(8);
-        put_u32(&mut hdr, crc32fast::hash(payload));
-        put_u32(&mut hdr, payload.len() as u32);
-        self.w.write_all(&hdr)?;
-        self.w.write_all(payload)?;
+        put_u32(&mut self.buf, crc32fast::hash(payload));
+        put_u32(&mut self.buf, payload.len() as u32);
+        self.buf.extend_from_slice(payload);
         Ok(())
     }
 
-    /// Flushes buffered bytes to the OS, and fsyncs if `sync`.
+    /// Hands buffered bytes to the OS, and fsyncs if `sync`.
     pub fn flush(&mut self, sync: bool) -> io::Result<()> {
-        self.w.flush()?;
+        if !self.buf.is_empty() {
+            let r = self.file.append(&self.buf);
+            self.buf.clear();
+            r?;
+        }
         if sync {
-            self.w.get_ref().sync_data()?;
+            self.file.sync()?;
         }
         Ok(())
     }
 }
 
 /// Reads all intact records from a log file.
-pub fn read_log(path: &Path) -> io::Result<(Vec<Vec<u8>>, bool)> {
-    let mut data = Vec::new();
-    File::open(path)?.read_to_end(&mut data)?;
+pub fn read_log(fs: &dyn FileSystem, path: &Path) -> io::Result<(Vec<Vec<u8>>, bool)> {
+    let data = fs.read(path)?;
     let mut out = Vec::new();
     let mut p = 0;
     let mut clean = true;
@@ -77,23 +75,24 @@ pub fn read_log(path: &Path) -> io::Result<(Vec<Vec<u8>>, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::StdFs;
 
     #[test]
     fn roundtrip_and_torn_tail() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("x.log");
-        let mut w = LogWriter::create(&p).unwrap();
+        let mut w = LogWriter::create(&StdFs, &p).unwrap();
         w.add_record(b"hello").unwrap();
         w.add_record(b"world").unwrap();
         w.flush(true).unwrap();
-        let (recs, clean) = read_log(&p).unwrap();
+        let (recs, clean) = read_log(&StdFs, &p).unwrap();
         assert!(clean);
         assert_eq!(recs, vec![b"hello".to_vec(), b"world".to_vec()]);
 
         let len = std::fs::metadata(&p).unwrap().len();
-        let f = OpenOptions::new().write(true).open(&p).unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(&p).unwrap();
         f.set_len(len - 2).unwrap();
-        let (recs, clean) = read_log(&p).unwrap();
+        let (recs, clean) = read_log(&StdFs, &p).unwrap();
         assert!(!clean);
         assert_eq!(recs, vec![b"hello".to_vec()]);
     }
