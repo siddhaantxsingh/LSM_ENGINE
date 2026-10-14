@@ -14,7 +14,8 @@
 //! db.put(b"a", b"2").unwrap();
 //! assert_eq!(db.get_opt(b"a", ReadOptions { snapshot: Some(&snap) }).unwrap().as_deref(), Some(&b"1"[..]));
 //!
-//! for (k, v) in db.scan(Some(b"a"), Some(b"z"), ReadOptions::default()) {
+//! for item in db.scan(Some(b"a"), Some(b"z"), ReadOptions::default()) {
+//!     let (k, v) = item.unwrap(); // Err if a read failed part-way
 //!     println!("{:?} = {:?}", k, v);
 //! }
 //! ```
@@ -40,5 +41,5 @@ pub use batch::WriteBatch;
 pub use db::{Db, ReadOptions, Snapshot, Stats};
 pub use error::{Error, Result};
 pub use iterator::DbIterator;
-pub use options::Options;
+pub use options::{Options, WalRecoveryMode};
 pub use sstable::TableOptions;

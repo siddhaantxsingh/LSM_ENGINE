@@ -112,7 +112,7 @@ fn scan_ranges() {
     }
     let got: Vec<_> = db
         .scan(Some(&k(100)), Some(&k(110)), ReadOptions::default())
-        .map(|(k, _)| k)
+        .map(|r| r.unwrap().0)
         .collect();
     let want: Vec<_> = (100..110).filter(|i| i % 2 == 1).map(k).collect();
     assert_eq!(got, want);
@@ -226,7 +226,10 @@ fn concurrent_readers_and_writers() {
             s.spawn(move || {
                 for _ in 0..50 {
                     // Iterators must always see sorted, unique keys.
-                    let keys: Vec<_> = db.iter(ReadOptions::default()).map(|(k, _)| k).collect();
+                    let keys: Vec<_> = db
+                        .iter(ReadOptions::default())
+                        .map(|r| r.unwrap().0)
+                        .collect();
                     assert!(keys.windows(2).all(|w| w[0] < w[1]));
                 }
             });
@@ -316,7 +319,7 @@ proptest::proptest! {
                     proptest::prop_assert_eq!(db.get(&key(k)).unwrap(), model.get(&key(k)).cloned());
                 }
                 Op::Scan(a, b) => {
-                    let got: Vec<_> = db.scan(Some(&key(a)), Some(&key(b)), ReadOptions::default()).collect();
+                    let got: Vec<_> = db.scan(Some(&key(a)), Some(&key(b)), ReadOptions::default()).map(|r| r.unwrap()).collect();
                     let want: Vec<_> = model.range(key(a)..key(b)).map(|(k, v)| (k.clone(), v.clone())).collect();
                     proptest::prop_assert_eq!(got, want);
                 }
@@ -328,7 +331,7 @@ proptest::proptest! {
                 }
             }
         }
-        let all: Vec<_> = db.iter(ReadOptions::default()).collect();
+        let all: Vec<_> = db.iter(ReadOptions::default()).map(|r| r.unwrap()).collect();
         let want: Vec<_> = model.into_iter().collect();
         proptest::prop_assert_eq!(all, want);
     }

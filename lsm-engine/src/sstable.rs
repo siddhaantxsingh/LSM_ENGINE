@@ -153,7 +153,16 @@ pub struct Table {
     cache: Option<Arc<BlockCache>>,
 }
 
+/// Reads a block and its CRC. Handles come from the file itself, so they
+/// are checked against the file length before any allocation.
 fn read_block(file: &dyn RandomAccessFile, off: u64, size: u64) -> Result<Vec<u8>> {
+    let end = off.checked_add(size).and_then(|e| e.checked_add(4));
+    if end.is_none_or(|e| e > file.len()) {
+        return corruption(format!(
+            "block handle out of range (offset {off}, size {size}, file {})",
+            file.len()
+        ));
+    }
     let mut buf = vec![0u8; size as usize + 4];
     file.read_exact_at(&mut buf, off)?;
     let crc = get_u32(&buf[size as usize..]);
@@ -183,6 +192,15 @@ impl Table {
         }
         let (foff, fsize) = (get_u64(&footer[0..]), get_u64(&footer[8..]));
         let (ioff, isize) = (get_u64(&footer[16..]), get_u64(&footer[24..]));
+        let body = len - FOOTER_LEN as u64;
+        for (o, n) in [(foff, fsize), (ioff, isize)] {
+            if o.checked_add(n)
+                .and_then(|e| e.checked_add(4))
+                .is_none_or(|e| e > body)
+            {
+                return corruption("table footer handle out of range");
+            }
+        }
         let filter = read_block(&*file, foff, fsize)?;
         let index = Block::new(Arc::new(read_block(&*file, ioff, isize)?))?;
         Ok(Table {
@@ -197,6 +215,9 @@ impl Table {
     fn data_block(&self, handle: &[u8]) -> Result<Block> {
         let (off, n) = get_varint(handle)?;
         let (size, _) = get_varint(&handle[n..])?;
+        if off.checked_add(size).is_none_or(|e| e > self.file.len()) {
+            return corruption("data block handle out of range");
+        }
         let key = (self.file_number, off);
         if let Some(c) = &self.cache
             && let Some(b) = c.get(&key)
@@ -220,12 +241,14 @@ impl Table {
         let mut idx = self.index.iter(cmp_internal);
         idx.seek(ikey);
         if !idx.valid() {
+            idx.status()?;
             return Ok(None);
         }
         let block = self.data_block(idx.value())?;
         let mut it = block.iter(cmp_internal);
         it.seek(ikey);
-        if it.valid() && user_key(it.key()) == uk {
+        it.status()?;
+        if it.valid() && it.key().len() >= 8 && user_key(it.key()) == uk {
             return Ok(Some((it.key().to_vec(), it.value().to_vec())));
         }
         Ok(None)
@@ -262,6 +285,11 @@ impl TableIterator {
 
     fn skip_empty_forward(&mut self) {
         while self.data.as_ref().is_some_and(|d| !d.valid()) {
+            if let Some(Err(e)) = self.data.as_ref().map(|d| d.status()) {
+                self.err = Some(e.to_string());
+                self.data = None;
+                return;
+            }
             self.index.next();
             self.load_block();
             if let Some(d) = &mut self.data {
@@ -304,10 +332,11 @@ impl InternalIterator for TableIterator {
         self.data.as_ref().unwrap().value()
     }
     fn status(&self) -> Result<()> {
-        match &self.err {
-            Some(e) => corruption(e.clone()),
-            None => Ok(()),
+        if let Some(e) = &self.err {
+            return corruption(e.clone());
         }
+        self.index.status()?;
+        self.data.as_ref().map_or(Ok(()), |d| d.status())
     }
 }
 

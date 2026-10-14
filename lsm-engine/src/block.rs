@@ -117,6 +117,7 @@ impl Block {
             next_offset: self.restarts_off,
             key: vec![],
             value_range: (0, 0),
+            corrupt: false,
         }
     }
 }
@@ -130,11 +131,15 @@ pub struct BlockIterator {
     next_offset: usize, // offset of the following entry
     key: Vec<u8>,
     value_range: (usize, usize),
+    /// An entry failed to parse (a block that passed its CRC but is
+    /// malformed). Reported through `status`, never treated as the end.
+    corrupt: bool,
 }
 
 impl BlockIterator {
     fn restart_point(&self, i: usize) -> usize {
-        get_u32(&self.data[self.restarts_off + 4 * i..]) as usize
+        let r = get_u32(&self.data[self.restarts_off + 4 * i..]) as usize;
+        r.min(self.restarts_off)
     }
 
     /// Parses the entry at next_offset; returns false at end of block.
@@ -155,10 +160,17 @@ impl BlockIterator {
             (parse(&mut p), parse(&mut p), parse(&mut p))
         else {
             self.offset = self.restarts_off;
+            self.corrupt = true;
             return false;
         };
-        if shared > self.key.len() || p + unshared + vlen > d.len() {
+        if shared > self.key.len()
+            || unshared
+                .checked_add(vlen)
+                .and_then(|n| n.checked_add(p))
+                .is_none_or(|e| e > d.len())
+        {
             self.offset = self.restarts_off;
+            self.corrupt = true;
             return false;
         }
         self.key.truncate(shared);
@@ -219,6 +231,13 @@ impl InternalIterator for BlockIterator {
 
     fn value(&self) -> &[u8] {
         &self.data[self.value_range.0..self.value_range.1]
+    }
+
+    fn status(&self) -> Result<()> {
+        if self.corrupt {
+            return corruption("malformed block entry");
+        }
+        Ok(())
     }
 }
 
