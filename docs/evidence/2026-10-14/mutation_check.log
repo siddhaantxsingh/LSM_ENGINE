@@ -1,0 +1,16 @@
+Wed Oct 14 20:51:46 UTC 2026  20:51:46 up 14 min,  0 user,  load average: 28.23, 20.67, 11.63
+KILLED   no dir fsync before MANIFEST edit ()
+KILLED   no dir fsync for new WAL ()
+KILLED   sync writes not fsynced ()
+KILLED   old WAL not synced on switch ()
+KILLED   SST not fsynced ()
+KILLED   deletes current WAL ()
+KILLED   mid-log corruption treated as torn tail ()
+KILLED   tombstone dropped without base-level check ()
+KILLED   old versions dropped ignoring snapshots ()
+SURVIVED flush ignores in-flight write (D1)
+KILLED   snapshot reads see newer data ()
+SURVIVED bloom filter false negatives
+KILLED   block CRC not checked ()
+SURVIVED MANIFEST mid-log corruption tolerated
+DONE

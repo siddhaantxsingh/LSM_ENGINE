@@ -13,7 +13,7 @@ use crate::coding::*;
 use crate::error::{Result, corruption};
 use crate::fs::FileSystem;
 use crate::key::*;
-use crate::log::{LogEnd, LogWriter, read_log};
+use crate::log::{LAST_RECORD_CHECKSUM, LogEnd, LogWriter, read_log};
 use crate::sstable::Table;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -380,6 +380,11 @@ impl VersionSet {
             LogEnd::Clean => {}
             // The last edit was being appended when the process died. It
             // was never synced, so nothing depended on it.
+            // Every MANIFEST record is fsynced on its own, so a complete
+            // last record with a bad checksum is damage, not a torn write.
+            LogEnd::TornTail { offset, reason } if reason == LAST_RECORD_CHECKSUM => {
+                return corruption(format!("{name} corrupt at offset {offset}: {reason}"));
+            }
             LogEnd::TornTail { .. } => self.manifest_tail_dropped = true,
             LogEnd::Corrupt { offset, reason } => {
                 return corruption(format!("{name} corrupt at offset {offset}: {reason}"));

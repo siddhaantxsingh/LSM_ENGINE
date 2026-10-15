@@ -34,3 +34,34 @@ jobs:
         with:
           workspaces: lsm-engine
       - run: cargo test --release
+
+  capi:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: capi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: capi
+      - run: sudo apt-get update && sudo apt-get install -y valgrind clang
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --release
+      - run: ./run_c_tests.sh
+
+  miri:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: capi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri, rust-src
+      - run: cargo miri test --lib

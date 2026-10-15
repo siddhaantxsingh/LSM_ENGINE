@@ -1,0 +1,65 @@
+### Thu Oct 15 08:32:47 UTC 2026  08:32:47 up 20 min,  0 user,  load average: 28.59, 26.17, 16.44
+
+fmt: ok
+     Running unittests src/lib.rs (target/release/deps/lsm_engine-9ba4ad114f31cb9b)
+test block::tests::build_and_seek ... ok
+test coding::tests::varint_roundtrip ... ok
+test fs::tests::simfs_crash_point_stops_everything ... ok
+test cache::tests::evicts_lru ... ok
+test fs::tests::simfs_durability_model ... ok
+test log::tests::every_truncation_is_a_torn_tail_with_a_prefix_of_records ... ok
+test log::tests::roundtrip_and_torn_tail ... ok
+test bloom::tests::no_false_negatives_and_low_fp_rate ... ok
+test key::tests::ordering ... ok
+test log::tests::every_bit_flip_before_the_last_record_is_corruption ... ok
+test version::regression_tests::d8_decode_rejects_bad_level ... ok
+test version::tests::edit_roundtrip ... ok
+test sstable::tests::build_read_iterate ... ok
+test sstable::tests::detects_corruption ... ok
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running unittests src/bin/lsmctl.rs (target/release/deps/lsmctl-0b571332018a36ff)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/corruption.rs (target/release/deps/corruption-a491f85f254b88f4)
+test bit_flips_in_every_file_type_are_detected has been running for over 60 seconds
+test bit_flips_in_every_file_type_are_detected ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 152.81s
+     Running tests/crash.rs (target/release/deps/crash-56dbfae6b39ed80a)
+test survives_sigkill ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.65s
+     Running tests/crash_sim.rs (target/release/deps/crash_sim-17cb1065656beb9c)
+test crash_at_every_fs_op_nosync ... ok
+test crash_at_every_fs_op_sync ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.17s
+     Running tests/db.rs (target/release/deps/db-3bf6fac77282478b)
+test basic_ops ... ok
+test detects_corrupted_table_on_read ... ok
+test recovers_from_wal_without_flush ... ok
+test concurrent_readers_and_writers ... ok
+test scan_ranges ... ok
+test snapshots_survive_compaction ... ok
+test write_batch_is_atomic_and_ordered ... ok
+test many_keys_across_levels_and_reopen ... ok
+test tombstones_reclaim_space ... ok
+test behaves_like_btreemap ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 21.22s
+     Running tests/model.rs (target/release/deps/model-67e9b89b39ded81e)
+test engine_matches_btreemap_model_with_snapshots ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.17s
+     Running tests/regress_scan_api.rs (target/release/deps/regress_scan_api-05d36110eaadf4de)
+test d6_scan_iterator_yields_errors ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+     Running tests/regressions.rs (target/release/deps/regressions-d4312a4b014832bd)
+test d2b_empty_manifest_refuses_open ... ok
+test d2_mid_manifest_corruption_refuses_open_and_keeps_tables ... ok
+test d10_zero_filled_wal_tail_is_a_torn_tail ... ok
+test d5_iter_reports_unopenable_table ... ok
+test d7_new_files_survive_power_loss ... ok
+test d1_flush_does_not_lose_concurrent_writes ... ok
+test d9_missing_table_refuses_open ... ok
+test d3_mid_wal_corruption_is_an_error ... ok
+test d4_bad_footer_size_is_corruption_not_panic ... ok
+test torn_manifest_tail_keeps_orphan_tables_aside ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+test src/lib.rs - (line 3) - compile ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+    Finished `release` profile [optimized] target(s) in 0.43s

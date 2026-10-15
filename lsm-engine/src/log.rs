@@ -1,7 +1,11 @@
 //! Append-only record log used for both the WAL and the MANIFEST.
 //!
 //! File: `magic (8 bytes) | record*`
-//! Record: `len: u32 | crc32(len): u32 | crc32(payload): u32 | payload`
+//! Record: `len: u32 | crc32(len): u32 | crc32(payload): u32 | payload | 0xA5`
+//!
+//! The trailer byte is never zero, so a record whose end was zero-filled by
+//! a crash can be told apart from a bit flip in a record that happens to
+//! end with zero bytes.
 //!
 //! The length has its own checksum, so a bit flip in a length field is
 //! detected instead of looking like a record that runs past the end of the
@@ -24,6 +28,11 @@ use std::path::Path;
 
 pub const LOG_MAGIC: &[u8; 8] = b"LSMLOG\x00\x02";
 const HEADER: usize = 12;
+const TRAILER: u8 = 0xA5;
+/// Reason for a complete last record whose payload checksum fails. A crash
+/// cannot produce this unless pages were written out of order, so callers
+/// that fsync every record (the MANIFEST) treat it as corruption.
+pub const LAST_RECORD_CHECKSUM: &str = "checksum mismatch in last record";
 
 pub struct LogWriter {
     file: Box<dyn WritableFile>,
@@ -37,6 +46,7 @@ pub fn encode_record(out: &mut Vec<u8>, payload: &[u8]) {
     put_u32(out, crc32fast::hash(&len));
     put_u32(out, crc32fast::hash(payload));
     out.extend_from_slice(payload);
+    out.push(TRAILER);
 }
 
 impl LogWriter {
@@ -137,20 +147,25 @@ pub fn parse_log(data: &[u8]) -> LogContents {
             break corrupt(p, "record length checksum mismatch");
         }
         let len = get_u32(len_bytes) as usize;
-        if rest.len() - HEADER < len {
+        if rest.len() - HEADER < len + 1 {
             break torn(p, "truncated record payload");
         }
         let payload = &rest[HEADER..HEADER + len];
-        if crc32fast::hash(payload) != get_u32(&rest[8..]) {
-            // The last record, or one whose tail (and everything after
-            // it) is zeros: what an interrupted append leaves behind.
-            if rest.len() == HEADER + len || zeros_from < p + HEADER + len {
-                break torn(p, "checksum mismatch in last record");
+        let trailer = rest[HEADER + len];
+        if crc32fast::hash(payload) != get_u32(&rest[8..]) || trailer != TRAILER {
+            let is_last = rest.len() == HEADER + len + 1;
+            // Zero-filled end of the record (and of the file): an append
+            // that was cut short by a crash.
+            if trailer == 0 && zeros_from < p + HEADER + len + 1 {
+                break torn(p, "zero-filled record tail");
+            }
+            if is_last {
+                break torn(p, LAST_RECORD_CHECKSUM);
             }
             break corrupt(p, "record checksum mismatch");
         }
         records.push(payload.to_vec());
-        p += HEADER + len;
+        p += HEADER + len + 1;
     };
     LogContents { records, end }
 }
@@ -211,7 +226,7 @@ mod tests {
     #[test]
     fn every_bit_flip_before_the_last_record_is_corruption() {
         let full = log_of(&[b"first record", b"second", b"third and last"]);
-        let last_start = full.len() - (HEADER + b"third and last".len());
+        let last_start = full.len() - (HEADER + b"third and last".len() + 1);
         for byte in 0..last_start {
             for bit in 0..8 {
                 let mut d = full.clone();
