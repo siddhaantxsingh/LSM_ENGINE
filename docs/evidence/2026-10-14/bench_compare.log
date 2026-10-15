@@ -1,0 +1,106 @@
+# bench-compare, 300000 keys, 16B keys/100B values, single thread, shared 4-vCPU container
+== run 1 lsm |  13:07:31 up 12 min,  0 user,  load average: 8.39, 8.05, 4.48
+lsm       fillrandom       150351 ops/s
+lsm       compact            0.60 s
+lsm       write-amp          4.02 x  (133 MB written to disk for 33 MB of puts)
+lsm       space                21 MB on disk after compaction
+lsm       readrandom       273016 ops/s
+lsm       readmissing     2185252 ops/s
+lsm       scan100           41127 ops/s
+lsm       fillsync            219 ops/s
+== run 1 rocksdb |  13:07:44 up 12 min,  0 user,  load average: 9.03, 8.21, 4.59
+rocksdb   fillrandom       145018 ops/s
+rocksdb   compact            0.89 s
+rocksdb   write-amp          4.07 x  (135 MB written to disk for 33 MB of puts)
+rocksdb   space                21 MB on disk after compaction
+rocksdb   readrandom       349905 ops/s
+rocksdb   readmissing     1977741 ops/s
+rocksdb   scan100           55065 ops/s
+rocksdb   fillsync            225 ops/s
+== run 1 sled |  13:07:58 up 12 min,  0 user,  load average: 9.59, 8.38, 4.70
+sled      fillrandom       119340 ops/s
+sled      compact            0.00 s
+sled      write-amp          3.30 x  (109 MB written to disk for 33 MB of puts)
+sled      space                63 MB on disk after compaction
+sled      readrandom       293108 ops/s
+sled      readmissing     1063553 ops/s
+sled      scan100           13464 ops/s
+sled      fillsync           9669 ops/s
+== run 1 btreemap |  13:08:02 up 12 min,  0 user,  load average: 9.59, 8.38, 4.70
+btreemap  fillrandom       820448 ops/s
+btreemap  compact            0.00 s
+btreemap  write-amp          0.00 x  (0 MB written to disk for 33 MB of puts)
+btreemap  space                 0 MB on disk after compaction
+btreemap  readrandom      1338022 ops/s
+btreemap  readmissing     4164712 ops/s
+btreemap  scan100          433006 ops/s
+== run 2 lsm |  13:08:03 up 12 min,  0 user,  load average: 9.54, 8.39, 4.73
+lsm       fillrandom       141350 ops/s
+lsm       compact            0.56 s
+lsm       write-amp          4.01 x  (133 MB written to disk for 33 MB of puts)
+lsm       space                21 MB on disk after compaction
+lsm       readrandom       360896 ops/s
+lsm       readmissing     2898395 ops/s
+lsm       scan100           36661 ops/s
+lsm       fillsync            278 ops/s
+== run 2 rocksdb |  13:08:14 up 13 min,  0 user,  load average: 9.62, 8.45, 4.79
+rocksdb   fillrandom       120944 ops/s
+rocksdb   compact            0.72 s
+rocksdb   write-amp          3.94 x  (130 MB written to disk for 33 MB of puts)
+rocksdb   space                21 MB on disk after compaction
+rocksdb   readrandom       384937 ops/s
+rocksdb   readmissing     2011226 ops/s
+rocksdb   scan100           34886 ops/s
+rocksdb   fillsync            457 ops/s
+== run 2 sled |  13:08:23 up 13 min,  0 user,  load average: 10.30, 8.63, 4.88
+sled      fillrandom       119556 ops/s
+sled      compact            0.35 s
+sled      write-amp          2.85 x  (94 MB written to disk for 33 MB of puts)
+sled      space                62 MB on disk after compaction
+sled      readrandom       528428 ops/s
+sled      readmissing     1729297 ops/s
+sled      scan100           18441 ops/s
+sled      fillsync            298 ops/s
+== run 2 btreemap |  13:08:34 up 13 min,  0 user,  load average: 10.80, 8.79, 4.98
+btreemap  fillrandom       568871 ops/s
+btreemap  compact            0.00 s
+btreemap  write-amp          0.00 x  (0 MB written to disk for 33 MB of puts)
+btreemap  space                 0 MB on disk after compaction
+btreemap  readrandom      1457866 ops/s
+btreemap  readmissing     4234929 ops/s
+btreemap  scan100          437907 ops/s
+== run 3 lsm |  13:08:35 up 13 min,  0 user,  load average: 10.80, 8.79, 4.98
+lsm       fillrandom       104227 ops/s
+lsm       compact            0.47 s
+lsm       write-amp          4.02 x  (133 MB written to disk for 33 MB of puts)
+lsm       space                21 MB on disk after compaction
+lsm       readrandom       369772 ops/s
+lsm       readmissing     1655833 ops/s
+lsm       scan100           32238 ops/s
+lsm       fillsync            479 ops/s
+== run 3 rocksdb |  13:08:44 up 13 min,  0 user,  load average: 11.06, 8.91, 5.06
+rocksdb   fillrandom       176690 ops/s
+rocksdb   compact            0.69 s
+rocksdb   write-amp          3.89 x  (128 MB written to disk for 33 MB of puts)
+rocksdb   space                21 MB on disk after compaction
+rocksdb   readrandom       344533 ops/s
+rocksdb   readmissing     1477205 ops/s
+rocksdb   scan100           52164 ops/s
+rocksdb   fillsync            302 ops/s
+== run 3 sled |  13:08:55 up 13 min,  0 user,  load average: 11.21, 9.02, 5.13
+sled      fillrandom       137290 ops/s
+sled      compact            0.01 s
+sled      write-amp          3.19 x  (105 MB written to disk for 33 MB of puts)
+sled      space                62 MB on disk after compaction
+sled      readrandom       441973 ops/s
+sled      readmissing     1162583 ops/s
+sled      scan100           18256 ops/s
+sled      fillsync           5262 ops/s
+== run 3 btreemap |  13:08:59 up 13 min,  0 user,  load average: 11.51, 9.12, 5.19
+btreemap  fillrandom      1126278 ops/s
+btreemap  compact            0.00 s
+btreemap  write-amp          0.00 x  (0 MB written to disk for 33 MB of puts)
+btreemap  space                 0 MB on disk after compaction
+btreemap  readrandom      1263855 ops/s
+btreemap  readmissing     3082254 ops/s
+btreemap  scan100          330246 ops/s

@@ -43,7 +43,7 @@ fsync takes milliseconds; doing one per write caps a single disk at a few thousa
 - A non-sync leader never absorbs a sync writer, which would return before that writer's data was fsynced.
 - **Visibility:** `visible_seq` is bumped only *after* the memtable insert, so readers never see half of a batch. That makes batches atomic for readers, not just on disk.
 
-Result: 1 → 32 threads gives 4.7k → 32.9k synced writes/s, with ~19 writers per fsync.
+(Earlier notes claimed 4.7k -> 32.9k synced writes/s from 1 -> 32 threads; this was not re-measured in the 2026-10-14 audit.)
 
 ### Backpressure
 
@@ -65,7 +65,7 @@ If compaction falls behind, L0 piles up and reads slow down, since every L0 file
 
 Each table carries a bloom filter over its user keys. A `get` checks it first, and a negative answer is definitive, so the table read is skipped. At 10 bits/key and k=7 hash functions the false-positive rate is ~0.8% (unit test checks < 2%). The k hashes come from **double hashing** (`h1 + i·h2`, Kirsch–Mitzenmacher), so one hash computation gives all seven.
 
-The bench shows the effect: **missing-key reads 7.7× faster**, since each lookup would otherwise read a block in every level.
+(Earlier notes reported missing-key reads 7.7x faster with the filter; not re-measured in the 2026-10-14 audit.) Without it, each lookup would otherwise read a block in every level.
 
 ### Block cache (`cache.rs`)
 
@@ -85,7 +85,7 @@ Sharded LRU keyed by `(file number, block offset)`, bounded in bytes. 16 shards 
 
 **Trivial move:** if an Ln file overlaps nothing in Ln+1, just re-parent it in the MANIFEST with no I/O. *Bug avoided:* the edit "deletes" and "adds" the same file number, and deletion marks a file obsolete (deleted from disk when unreferenced). `Version::apply` detects this and moves the existing `FileMeta` instead; otherwise trivial moves would delete live data.
 
-**Write amplification:** measured at 4.3× for fillrandom plus full compaction (flush + compaction bytes / user bytes). Leveled compaction trades higher write amp for low read/space amp; tiered/universal compaction (Cassandra, RocksDB universal) makes the opposite choice.
+**Write amplification:** measured at 3.99x-4.40x for 1M-key fillrandom plus full compaction in the 2026-10-14 baseline (flush + compaction bytes / user bytes). Leveled compaction trades higher write amp for low read/space amp; tiered/universal compaction (Cassandra, RocksDB universal) makes the opposite choice.
 
 ## 6. Metadata and crash safety (`version.rs`)
 
@@ -112,16 +112,12 @@ So after a crash the MANIFEST describes a consistent set of complete files. Left
 
 ## 8. Testing strategy
 
-| Test | What it proves |
-|---|---|
-| `crash.rs` (SIGKILL) | Durability: every acked synced write survives a kill at any point, including mid-compaction and during recovery. A mutation check confirms the test fails if the WAL flush is removed. |
-| `behaves_like_btreemap` (proptest) | Functional correctness against a trivially correct model, across flush/compact/reopen, with automatic shrinking to a minimal failing case. |
-| `snapshots_survive_compaction` | Compaction GC respects snapshots. |
-| `tombstones_reclaim_space` | Deleted data is actually removed (>95% space reclaimed). |
-| `detects_corrupted_table_on_read` | Bit flips are reported as errors, not returned as data. |
-| `concurrent_readers_and_writers` | Thread safety; iterators always see sorted, unique keys. |
+See the test table in the repository README and
+`docs/AUDIT_2026-10-14.md`. All file I/O goes through the `FileSystem`
+trait (`src/fs.rs`), so tests can run on `SimFs`, which simulates power
+loss and can crash before any operation.
 
-Compaction checks iterator `status()` before installing its output. A read error mid-merge would otherwise look like "end of data" and **silently drop the rest of the inputs**, which is a classic and catastrophic bug.
+Compaction checks iterator `status()` before installing its output. A read error mid-merge would otherwise look like "end of data" and **silently drop the rest of the inputs**.
 
 ## 9. Limitations and next steps
 
@@ -142,5 +138,5 @@ Compaction checks iterator `status()` before installing its output. A read error
 6. *How do you guarantee crash consistency?* fsync order: table → MANIFEST edit → delete old files; atomic CURRENT; CRC'd logs with torn-tail truncation (§6).
 7. *How do snapshots work with compaction?* Sequence numbers; compaction keeps the newest version ≤ each live snapshot (§5).
 8. *What is group commit and why does it help?* §3.
-9. *What is write amplification for leveled compaction, roughly?* ~10× per level (fan-out) in the worst case; measured 4.3× here because the dataset is small.
+9. *What is write amplification for leveled compaction, roughly?* ~10× per level (fan-out) in the worst case; about 4x here because the dataset is small.
 10. *How did you test durability?* SIGKILL test plus the mutation check (§8).
