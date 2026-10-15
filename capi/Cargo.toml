@@ -1,0 +1,16 @@
+[package]
+name = "lsm-capi"
+version = "0.1.0"
+edition = "2024"
+description = "C ABI for lsm-engine"
+publish = false
+
+[lib]
+name = "lsm"
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+lsm-engine = { path = "../lsm-engine" }
+
+[profile.release]
+panic = "unwind"
