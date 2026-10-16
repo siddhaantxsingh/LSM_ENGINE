@@ -7,7 +7,7 @@ BLOCKED / NOT IMPLEMENTED. Evidence paths are under
 | # | Requirement | Baseline | Final | Evidence | Notes |
 |---|---|---|---|---|---|
 | 1 | Build, fmt, clippy `-D warnings`, tests | PARTIAL (clippy failed) | VERIFIED | `baseline.md`, `final_tests.log` | 21 tests at baseline; 13 test targets now |
-| 2 | CI workflow at repo root | NOT IMPLEMENTED | IMPLEMENTED BUT UNVERIFIED | `.github/workflows/ci.yml` | lint, test, capi (C + ASan + valgrind), miri jobs; see final report for run status |
+| 2 | CI workflow at repo root | NOT IMPLEMENTED | VERIFIED | `.github/workflows/ci.yml` | lint, test, capi (C + ASan + valgrind), miri jobs; run 38740468249 green |
 | 3 | WAL crash consistency (crash at every write/fsync) | PARTIAL (SIGKILL test only) | VERIFIED | `crash_sim.rs`, `crash_sweep.log` | power loss before each of 711 (sync) / 460 (no sync) fs ops x 5 modes, compared to a model; 6,055 crash images |
 | 4 | SSTable and MANIFEST crash consistency | PARTIAL | VERIFIED | same sweep, `d7_*`, `d2_*` | sweep covers flush, compaction, MANIFEST and CURRENT writes, plus a crash during recovery |
 | 5 | Compaction crash consistency | NOT IMPLEMENTED (no test) | VERIFIED | `crash_sim.rs` reference run: 13 flushes, 6 compactions | small workload; L0-L2 only |
