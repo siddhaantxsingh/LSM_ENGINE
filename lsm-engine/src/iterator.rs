@@ -40,6 +40,12 @@ impl MergingIterator {
         let mut best: Option<usize> = None;
         for (i, c) in self.children.iter().enumerate() {
             if !c.valid() {
+                if c.status().is_err() {
+                    // A child stopped on an error: stop the whole merge
+                    // instead of continuing with a gap in the key space.
+                    self.current = None;
+                    return;
+                }
                 continue;
             }
             best = match best {
@@ -102,6 +108,7 @@ pub struct DbIterator {
     key: Vec<u8>,
     value: Vec<u8>,
     valid: bool,
+    error_reported: bool,
     // Keeps the version (and its files) alive while iterating.
     _pin: Box<dyn Send + Sync>,
 }
@@ -119,6 +126,7 @@ impl DbIterator {
             key: vec![],
             value: vec![],
             valid: false,
+            error_reported: false,
             _pin: pin,
         }
     }
@@ -128,11 +136,13 @@ impl DbIterator {
     }
 
     pub fn seek_to_first(&mut self) {
+        self.error_reported = false;
         self.inner.seek_to_first();
         self.find_next_user_entry(None);
     }
 
     pub fn seek(&mut self, user_key: &[u8]) {
+        self.error_reported = false;
         self.inner
             .seek(&make_internal_key(user_key, self.snapshot, SEEK_KIND));
         self.find_next_user_entry(None);
@@ -190,14 +200,21 @@ impl DbIterator {
     }
 }
 
+/// Yields `Ok((key, value))` in key order. If a read error stops the scan
+/// early, the last item is `Err` (once), so an incomplete scan can never
+/// be mistaken for a complete one (audit defect D6).
 impl Iterator for DbIterator {
-    type Item = (Vec<u8>, Vec<u8>);
+    type Item = crate::Result<(Vec<u8>, Vec<u8>)>;
     fn next(&mut self) -> Option<Self::Item> {
         if !self.valid {
-            return None;
+            if self.error_reported {
+                return None;
+            }
+            self.error_reported = true;
+            return self.status().err().map(Err);
         }
         let item = (self.key.clone(), self.value.clone());
         DbIterator::next(self);
-        Some(item)
+        Some(Ok(item))
     }
 }

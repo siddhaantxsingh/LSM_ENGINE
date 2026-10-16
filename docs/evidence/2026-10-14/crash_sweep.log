@@ -1,0 +1,5 @@
+sync=true: reference run has 711 fs ops: {Sync: 309, Append: 294, SyncDir: 36, Create: 39, Rename: 1, Remove: 32}
+sync=false: reference run has 460 fs ops: {Rename: 1, Remove: 32, SyncDir: 36, Sync: 58, Create: 39, Append: 294}
+sync=false: verified 2400 crash images; crash points by preceding op kind: {"Append": 291, "Create": 41, "Remove": 32, "Rename": 1, "Sync": 57, "SyncDir": 37}
+sync=true: verified 3655 crash images; crash points by preceding op kind: {"Append": 300, "Create": 40, "Remove": 34, "Rename": 1, "Sync": 300, "SyncDir": 39}
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.01s

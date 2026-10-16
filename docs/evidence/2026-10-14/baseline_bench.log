@@ -1,0 +1,30 @@
+== run 1;  18:14:45 up 9 min,  0 user,  load average: 7.39, 4.79, 2.01
+lsm-engine bench: 1000000 keys, 100B values, 2 thread(s), bloom 10 bits/key
+fillseq            270097 ops/s      3.70 µs/op     31.3 MB/s
+fillrandom          45563 ops/s     21.95 µs/op      5.3 MB/s
+compact              1.32 s   (levels: 0,0,35,0,0,0,0)
+write-amp            4.03x
+readrandom         175772 ops/s      5.69 µs/op     20.4 MB/s
+               631635 of 1000000 found, block cache hit rate 9.9%
+readmissing       1822988 ops/s      0.55 µs/op    211.5 MB/s
+readseq           3466910 ops/s      0.29 µs/op    402.2 MB/s
+== run 2;  18:15:19 up 9 min,  0 user,  load average: 7.52, 5.08, 2.21
+lsm-engine bench: 1000000 keys, 100B values, 2 thread(s), bloom 10 bits/key
+fillseq            186970 ops/s      5.35 µs/op     21.7 MB/s
+fillrandom         121474 ops/s      8.23 µs/op     14.1 MB/s
+compact              1.91 s   (levels: 0,0,35,0,0,0,0)
+write-amp            4.40x
+readrandom         251887 ops/s      3.97 µs/op     29.2 MB/s
+               631635 of 1000000 found, block cache hit rate 9.8%
+readmissing       1488088 ops/s      0.67 µs/op    172.6 MB/s
+readseq           3174517 ops/s      0.32 µs/op    368.2 MB/s
+== run 3;  18:15:39 up 10 min,  0 user,  load average: 7.74, 5.28, 2.33
+lsm-engine bench: 1000000 keys, 100B values, 2 thread(s), bloom 10 bits/key
+fillseq             95361 ops/s     10.49 µs/op     11.1 MB/s
+fillrandom          84902 ops/s     11.78 µs/op      9.8 MB/s
+compact              2.86 s   (levels: 0,0,35,0,0,0,0)
+write-amp            3.99x
+readrandom         146452 ops/s      6.83 µs/op     17.0 MB/s
+               631635 of 1000000 found, block cache hit rate 9.9%
+readmissing        934057 ops/s      1.07 µs/op    108.4 MB/s
+readseq           3540151 ops/s      0.28 µs/op    410.7 MB/s

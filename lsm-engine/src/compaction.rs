@@ -206,7 +206,7 @@ pub fn run_compaction(
                 let num = alloc();
                 builder = Some((
                     num,
-                    TableBuilder::create(&table_path(dir, num), opts.table)?,
+                    TableBuilder::create(&*opts.fs, &table_path(dir, num), opts.table)?,
                 ));
             }
             builder.as_mut().unwrap().1.add(ik, it.value())?;

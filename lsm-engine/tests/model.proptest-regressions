@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e7068da0a7d6691cceb77079e663bc001b319772fde61f3224553e19de87a381 # shrinks to ops = [TakeSnapshot, Batch([(154, Some(0))]), SnapGet(15277499369750342, 154)]

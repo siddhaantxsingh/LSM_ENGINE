@@ -1,0 +1,12 @@
+### Thu Oct 15 13:04:58 UTC 2026 cargo +nightly miri test --lib
+Preparing a sysroot for Miri (target: x86_64-unknown-linux-gnu)... done
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.08s
+     Running unittests src/lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/lsm-capi/66e3fb6a9f95a69c/out/lsm-66e3fb6a9f95a69c)
+
+running 3 tests
+test tests::null_and_bad_arguments_are_errors_not_crashes ... ok
+test tests::panics_do_not_cross_the_boundary ... ok
+test tests::roundtrip_snapshot_batch_iter_in_memory ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.63s
+

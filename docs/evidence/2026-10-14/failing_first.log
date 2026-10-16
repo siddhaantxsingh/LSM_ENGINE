@@ -1,0 +1,273 @@
+### git HEAD 38aed5c (before fixes)
+$ cargo test --test regressions
+   Compiling lsm-engine v0.1.0 (/home/user/lsm_engine/lsm-engine)
+    Finished `release` profile [optimized] target(s) in 27.12s
+     Running tests/regressions.rs (target/release/deps/regressions-d4312a4b014832bd)
+
+running 9 tests
+test d1_flush_does_not_lose_concurrent_writes ... ok
+test d2b_empty_manifest_refuses_open ... FAILED
+test d3_mid_wal_corruption_is_an_error ... FAILED
+test d2_mid_manifest_corruption_refuses_open_and_keeps_tables ... FAILED
+test d10_zero_filled_wal_tail_is_a_torn_tail ... FAILED
+test d7_new_files_survive_power_loss ... FAILED
+test d4_bad_footer_size_is_corruption_not_panic ... FAILED
+test d5_iter_reports_unopenable_table ... FAILED
+test d9_missing_table_refuses_open ... FAILED
+
+failures:
+
+---- d2b_empty_manifest_refuses_open stdout ----
+
+thread 'd2b_empty_manifest_refuses_open' (27296) panicked at tests/regressions.rs:123:5:
+assertion failed: Db::open(dir.path(), l0_only()).is_err()
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+   2: core::panicking::panic
+   3: <regressions::d2b_empty_manifest_refuses_open::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d3_mid_wal_corruption_is_an_error stdout ----
+
+thread 'd3_mid_wal_corruption_is_an_error' (27340) panicked at tests/regressions.rs:151:13:
+opened despite mid-WAL corruption; 1/100 synced writes visible
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+   2: <regressions::d3_mid_wal_corruption_is_an_error::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d2_mid_manifest_corruption_refuses_open_and_keeps_tables stdout ----
+
+thread 'd2_mid_manifest_corruption_refuses_open_and_keeps_tables' (27295) panicked at tests/regressions.rs:108:5:
+opened with a corrupted MANIFEST
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+   2: <regressions::d2_mid_manifest_corruption_refuses_open_and_keeps_tables::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d10_zero_filled_wal_tail_is_a_torn_tail stdout ----
+
+thread 'd10_zero_filled_wal_tail_is_a_torn_tail' (27293) panicked at tests/regressions.rs:277:46:
+zero tail must be tolerated: Corruption("batch too short")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+   2: core::result::unwrap_failed
+   3: <regressions::d10_zero_filled_wal_tail_is_a_torn_tail::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d7_new_files_survive_power_loss stdout ----
+
+thread 'd7_new_files_survive_power_loss' (27368) panicked at tests/regressions.rs:236:31:
+read after power loss: Io(Custom { kind: NotFound, error: "/db/000005.sst not found" })
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+   2: core::result::unwrap_failed
+   3: <regressions::d7_new_files_survive_power_loss::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d4_bad_footer_size_is_corruption_not_panic stdout ----
+
+thread 'd4_bad_footer_size_is_corruption_not_panic' (27364) panicked at src/sstable.rs:159:27:
+range start index 18446744073709551615 out of range for slice of length 3
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+   2: core::slice::index::slice_index_fail
+   3: lsm_engine::sstable::read_block
+   4: <lsm_engine::sstable::Table>::open
+   5: <lsm_engine::version::FileMeta>::table
+   6: <lsm_engine::version::Version>::get::{closure#0}
+   7: <lsm_engine::version::Version>::get
+   8: <lsm_engine::db::Db>::get_opt
+   9: <regressions::d4_bad_footer_size_is_corruption_not_panic::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+thread 'd4_bad_footer_size_is_corruption_not_panic' (27364) panicked at tests/regressions.rs:175:17:
+panicked on corrupt footer: Any { .. }
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+   2: core::result::unwrap_failed
+   3: <regressions::d4_bad_footer_size_is_corruption_not_panic::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d5_iter_reports_unopenable_table stdout ----
+
+thread 'd5_iter_reports_unopenable_table' (27367) panicked at tests/regressions.rs:193:9:
+scan silently returned 200 of 400 keys
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+   2: <regressions::d5_iter_reports_unopenable_table::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d9_missing_table_refuses_open stdout ----
+
+thread 'd9_missing_table_refuses_open' (27370) panicked at tests/regressions.rs:251:5:
+assertion failed: Db::open(dir.path(), l0_only()).is_err()
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+   2: core::panicking::panic
+   3: <regressions::d9_missing_table_refuses_open::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+
+failures:
+    d10_zero_filled_wal_tail_is_a_torn_tail
+    d2_mid_manifest_corruption_refuses_open_and_keeps_tables
+    d2b_empty_manifest_refuses_open
+    d3_mid_wal_corruption_is_an_error
+    d4_bad_footer_size_is_corruption_not_panic
+    d5_iter_reports_unopenable_table
+    d7_new_files_survive_power_loss
+    d9_missing_table_refuses_open
+
+test result: FAILED. 1 passed; 8 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+
+error: test failed, to rerun pass `--test regressions`
+$ cargo test --lib regression_tests
+   Compiling lsm-engine v0.1.0 (/home/user/lsm_engine/lsm-engine)
+    Finished `release` profile [optimized] target(s) in 10.17s
+     Running unittests src/lib.rs (target/release/deps/lsm_engine-9ba4ad114f31cb9b)
+
+running 1 test
+test version::regression_tests::d8_decode_rejects_bad_level ... FAILED
+
+failures:
+
+---- version::regression_tests::d8_decode_rejects_bad_level stdout ----
+
+thread 'version::regression_tests::d8_decode_rejects_bad_level' (28408) panicked at src/version.rs:463:9:
+assertion failed: VersionEdit::decode(&b).is_err()
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+   2: core::panicking::panic
+   3: lsm_engine::version::regression_tests::d8_decode_rejects_bad_level
+   4: <lsm_engine::version::regression_tests::d8_decode_rejects_bad_level::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+
+failures:
+    version::regression_tests::d8_decode_rejects_bad_level
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.18s
+
+error: test failed, to rerun pass `--lib`
+$ cargo test --test regress_scan_api
+error[E0277]: a value of type `Vec<Result<(Vec<u8>, Vec<u8>), lsm_engine::Error>>` cannot be built from an iterator over elements of type `(Vec<u8>, Vec<u8>)`
+  --> tests/regress_scan_api.rs:45:53
+  --> /rustc/b940084d7eb6a299eb4bfeb8e34901bc051e7ac4/library/alloc/src/vec/mod.rs:3993:0
+  --> /rustc/b940084d7eb6a299eb4bfeb8e34901bc051e7ac4/library/core/src/iter/traits/iterator.rs:2073:4
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `lsm-engine` (test "regress_scan_api") due to 1 previous error
+### git HEAD 38aed5c + new tests only (before fixes), rerun with D1 using SimFs
+$ cargo test --release --test regressions -- --test-threads=1
+    Finished `release` profile [optimized] target(s) in 0.08s
+     Running tests/regressions.rs (target/release/deps/regressions-d4312a4b014832bd)
+
+running 9 tests
+test d10_zero_filled_wal_tail_is_a_torn_tail ... FAILED
+test d1_flush_does_not_lose_concurrent_writes ... FAILED
+test d2_mid_manifest_corruption_refuses_open_and_keeps_tables ... FAILED
+test d2b_empty_manifest_refuses_open ... FAILED
+test d3_mid_wal_corruption_is_an_error ... FAILED
+test d4_bad_footer_size_is_corruption_not_panic ... FAILED
+test d5_iter_reports_unopenable_table ... FAILED
+test d7_new_files_survive_power_loss ... FAILED
+test d9_missing_table_refuses_open ... FAILED
+
+failures:
+
+---- d10_zero_filled_wal_tail_is_a_torn_tail stdout ----
+
+thread 'd10_zero_filled_wal_tail_is_a_torn_tail' (29694) panicked at tests/regressions.rs:292:46:
+zero tail must be tolerated: Corruption("batch too short")
+stack backtrace:
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d1_flush_does_not_lose_concurrent_writes stdout ----
+flushes=11 groups=121
+
+thread 'd1_flush_does_not_lose_concurrent_writes' (29790) panicked at tests/regressions.rs:99:5:
+assertion `left == right` failed: acknowledged writes lost by concurrent flush
+  left: 1850
+ right: 0
+stack backtrace:
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d2_mid_manifest_corruption_refuses_open_and_keeps_tables stdout ----
+
+thread 'd2_mid_manifest_corruption_refuses_open_and_keeps_tables' (29808) panicked at tests/regressions.rs:123:5:
+opened with a corrupted MANIFEST
+stack backtrace:
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d2b_empty_manifest_refuses_open stdout ----
+
+thread 'd2b_empty_manifest_refuses_open' (29811) panicked at tests/regressions.rs:138:5:
+assertion failed: Db::open(dir.path(), l0_only()).is_err()
+stack backtrace:
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d3_mid_wal_corruption_is_an_error stdout ----
+
+thread 'd3_mid_wal_corruption_is_an_error' (29817) panicked at tests/regressions.rs:166:13:
+opened despite mid-WAL corruption; 1/100 synced writes visible
+stack backtrace:
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d4_bad_footer_size_is_corruption_not_panic stdout ----
+
+thread 'd4_bad_footer_size_is_corruption_not_panic' (29852) panicked at src/sstable.rs:159:27:
+range start index 18446744073709551615 out of range for slice of length 3
+stack backtrace:
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+thread 'd4_bad_footer_size_is_corruption_not_panic' (29852) panicked at tests/regressions.rs:190:17:
+panicked on corrupt footer: Any { .. }
+stack backtrace:
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d5_iter_reports_unopenable_table stdout ----
+
+thread 'd5_iter_reports_unopenable_table' (29878) panicked at tests/regressions.rs:208:9:
+scan silently returned 200 of 400 keys
+stack backtrace:
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d7_new_files_survive_power_loss stdout ----
+
+thread 'd7_new_files_survive_power_loss' (29894) panicked at tests/regressions.rs:251:31:
+read after power loss: Io(Custom { kind: NotFound, error: "/db/000005.sst not found" })
+stack backtrace:
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- d9_missing_table_refuses_open stdout ----
+
+thread 'd9_missing_table_refuses_open' (29897) panicked at tests/regressions.rs:266:5:
+assertion failed: Db::open(dir.path(), l0_only()).is_err()
+stack backtrace:
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+
+failures:
+    d10_zero_filled_wal_tail_is_a_torn_tail
+    d1_flush_does_not_lose_concurrent_writes
+    d2_mid_manifest_corruption_refuses_open_and_keeps_tables
+    d2b_empty_manifest_refuses_open
+    d3_mid_wal_corruption_is_an_error
+    d4_bad_footer_size_is_corruption_not_panic
+    d5_iter_reports_unopenable_table
+    d7_new_files_survive_power_loss
+    d9_missing_table_refuses_open
+
+test result: FAILED. 0 passed; 9 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.02s
+
+error: test failed, to rerun pass `--test regressions`

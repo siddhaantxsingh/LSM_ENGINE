@@ -48,7 +48,11 @@ fn main() {
         ("scan", r) => {
             let start = r.first().map(|s| s.as_bytes());
             let end = r.get(1).map(|s| s.as_bytes());
-            for (k, v) in db.scan(start, end, ReadOptions::default()) {
+            for item in db.scan(start, end, ReadOptions::default()) {
+                let (k, v) = item.unwrap_or_else(|e| {
+                    eprintln!("scan: {e}");
+                    std::process::exit(1)
+                });
                 println!(
                     "{}\t{}",
                     String::from_utf8_lossy(&k),
@@ -77,7 +81,7 @@ fn crash_writer(dir: &str) {
     let db = Db::open(dir, opts).unwrap();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    for i in 0u64.. {
+    for i in 0u64..u64::MAX {
         let mut b = WriteBatch::new();
         let k = format!("key{i:010}");
         b.put(
@@ -212,7 +216,10 @@ fn bench(dir: &str, rest: &[String]) {
     report("readmissing", per, t);
 
     let t = Instant::now();
-    let n = db.iter(ReadOptions::default()).count();
+    let n = db
+        .iter(ReadOptions::default())
+        .try_fold(0usize, |n, r| r.map(|_| n + 1))
+        .unwrap();
     report("readseq", n, t);
 }
 

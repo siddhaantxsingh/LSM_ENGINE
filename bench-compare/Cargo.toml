@@ -1,0 +1,15 @@
+[package]
+name = "bench-compare"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Kept out of the main crate so CI and normal builds do not compile RocksDB.
+
+[dependencies]
+lsm-engine = { path = "../lsm-engine" }
+rocksdb = { version = "0.24", default-features = false }
+sled = "0.34"
+
+[profile.release]
+debug = false

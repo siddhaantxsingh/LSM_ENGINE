@@ -19,9 +19,9 @@ use crate::compaction::{self, Compaction};
 use crate::error::{Error, Result};
 use crate::iterator::{DbIterator, InternalIterator, MergingIterator};
 use crate::key::*;
-use crate::log::{LogWriter, read_log};
+use crate::log::{LogEnd, LogWriter, read_log};
 use crate::memtable::{LookupResult, MemTable};
-use crate::options::Options;
+use crate::options::{Options, WalRecoveryMode};
 use crate::sstable::{TableBuilder, TableIterator};
 use crate::version::*;
 use std::collections::{BTreeMap, VecDeque};
@@ -49,6 +49,10 @@ struct State {
     bg_error: Option<String>,
     manual_compaction: bool,
     bg_busy: bool,
+    /// A write leader is appending to the WAL / inserting into `mem`
+    /// without holding the lock. The memtable must not be frozen (and the
+    /// WAL must not be switched) until it finishes.
+    write_in_progress: bool,
 }
 
 #[derive(Default, Debug)]
@@ -122,11 +126,20 @@ fn parse_file_name(name: &str) -> Option<(u64, &str)> {
 impl Db {
     pub fn open(dir: impl AsRef<Path>, opts: Options) -> Result<Db> {
         let dir = dir.as_ref().to_path_buf();
-        std::fs::create_dir_all(&dir)?;
-        let mut versions = VersionSet::new(&dir);
-        let exists = dir.join("CURRENT").exists();
+        let fs = opts.fs.clone();
+        fs.create_dir_all(&dir)?;
+        let mut versions = VersionSet::new(fs.clone(), &dir);
+        let names = fs.list_dir(&dir)?;
+        let exists = fs.exists(&dir.join("CURRENT"));
         if exists {
             versions.recover()?;
+        } else if names.iter().any(|n| n.ends_with(".sst")) {
+            // Tables without CURRENT: never silently start an empty
+            // database on top of (and then delete) someone's data.
+            return Err(Error::Corruption(format!(
+                "{} has tables but no CURRENT file",
+                dir.display()
+            )));
         } else if !opts.create_if_missing {
             return Err(Error::InvalidArgument(format!(
                 "{} does not exist",
@@ -135,24 +148,56 @@ impl Db {
         }
         let cache = Arc::new(BlockCache::new(opts.block_cache_size));
 
+        // Never reuse a number of a file that is still on disk (e.g. a
+        // table kept aside after a torn MANIFEST tail).
+        for name in &names {
+            if let Some((n, _)) = parse_file_name(name) {
+                versions.next_file = versions.next_file.max(n + 1);
+            }
+        }
+
         // Replay WAL files that weren't flushed before the crash, in order.
-        let mut logs: Vec<u64> = std::fs::read_dir(&dir)?
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let name = e.file_name().into_string().ok()?;
-                let (n, ext) = parse_file_name(&name)?;
+        let mut logs: Vec<u64> = names
+            .iter()
+            .filter_map(|name| {
+                let (n, ext) = parse_file_name(name)?;
                 (ext == "log" && n >= versions.log_number).then_some(n)
             })
             .collect();
         logs.sort();
-        let mut edit = VersionEdit::default();
+        let mut contents = Vec::new();
         for &n in &logs {
-            versions.next_file = versions.next_file.max(n + 1);
-            let (records, _clean) = read_log(&log_path(&dir, n))?;
+            contents.push((n, read_log(&*fs, &log_path(&dir, n))?));
+        }
+        let mut edit = VersionEdit::default();
+        for i in 0..contents.len() {
+            let (n, c) = &contents[i];
+            let later_has_records = contents[i + 1..].iter().any(|(_, c)| !c.records.is_empty());
+            let mut stop = false;
+            let fail = |what: &str| {
+                Err(Error::Corruption(format!(
+                    "WAL {n:06}.log: {what}; refusing to open (see WalRecoveryMode)"
+                )))
+            };
+            match (&c.end, opts.wal_recovery_mode) {
+                (LogEnd::Clean, _) => {}
+                (_, WalRecoveryMode::PointInTime) => stop = true,
+                (LogEnd::TornTail { offset, reason }, WalRecoveryMode::TolerateCorruptedTail) => {
+                    if later_has_records {
+                        return fail(&format!(
+                            "{reason} at offset {offset} but later WAL files have data"
+                        ));
+                    }
+                }
+                (LogEnd::TornTail { offset, reason }, _)
+                | (LogEnd::Corrupt { offset, reason }, _) => {
+                    return fail(&format!("{reason} at offset {offset}"));
+                }
+            }
             let mem = MemTable::new();
-            for r in records {
+            for r in &c.records {
                 let (base, count) =
-                    WriteBatch::iterate(&r, |s, k, key, val| mem.add(s, k, key, val))?;
+                    WriteBatch::iterate(r, |s, k, key, val| mem.add(s, k, key, val))?;
                 if count > 0 {
                     versions.last_seq = versions.last_seq.max(base + count as u64 - 1);
                 }
@@ -162,14 +207,17 @@ impl Db {
                 let (size, sm, lg) = write_level0(&dir, &opts, &mem, num)?;
                 edit.added.push((0, num, size, sm, lg));
             }
+            if stop {
+                break;
+            }
         }
 
         let wal_number = versions.new_file_number();
-        let wal = LogWriter::create(&log_path(&dir, wal_number))?;
+        let wal = LogWriter::create(&*fs, &log_path(&dir, wal_number))?;
         // Install recovered tables and the new log number in a fresh MANIFEST.
         versions.log_number = wal_number;
         if !edit.added.is_empty() {
-            versions.apply_in_memory(&edit);
+            versions.apply_in_memory(&edit)?;
         }
         versions.write_new_manifest()?;
 
@@ -189,6 +237,7 @@ impl Db {
                 bg_error: None,
                 manual_compaction: false,
                 bg_busy: false,
+                write_in_progress: false,
             }),
             wal: Mutex::new(wal),
             bg_cv: Condvar::new(),
@@ -287,8 +336,10 @@ impl Db {
             children.push(Box::new(imm.iter()));
         }
         for f in version.levels[0].iter().rev() {
-            if let Ok(t) = f.table(&self.inner.cache) {
-                children.push(Box::new(t.iter()));
+            match f.table(&self.inner.cache) {
+                Ok(t) => children.push(Box::new(t.iter())),
+                // Never skip a table silently (audit defect D5).
+                Err(e) => children.push(Box::new(ErrorIterator(e.to_string()))),
             }
         }
         for level in 1..NUM_LEVELS {
@@ -340,11 +391,22 @@ impl Db {
     /// Forces the current memtable to an L0 table.
     pub fn flush(&self) -> Result<()> {
         let mut st = self.inner.state.lock().unwrap();
+        // Wait for any in-flight write group: its leader inserts into the
+        // active memtable without the lock, so freezing it now would lose
+        // that write (audit defect D1).
+        while st.write_in_progress {
+            st = self.inner.cv.wait(st).unwrap();
+        }
         if !st.mem.is_empty() {
-            while st.imm.is_some() {
+            while st.imm.is_some() || st.write_in_progress {
+                if let Some(e) = &st.bg_error {
+                    return Err(Error::Corruption(e.clone()));
+                }
                 st = self.inner.cv.wait(st).unwrap();
             }
-            st = self.inner.switch_memtable(st)?;
+            if !st.mem.is_empty() {
+                st = self.inner.switch_memtable(st)?;
+            }
         }
         while st.imm.is_some() {
             if let Some(e) = &st.bg_error {
@@ -407,7 +469,7 @@ fn write_level0(
     mem: &MemTable,
     num: u64,
 ) -> Result<(u64, Vec<u8>, Vec<u8>)> {
-    let mut b = TableBuilder::create(&table_path(dir, num), opts.table)?;
+    let mut b = TableBuilder::create(&*opts.fs, &table_path(dir, num), opts.table)?;
     let mut it = mem.iter();
     it.seek_to_first();
     while it.valid() {
@@ -471,6 +533,7 @@ impl Inner {
                 merged.set_seq(base);
                 st.versions.last_seq += merged.len() as u64;
                 let mem = st.mem.clone();
+                st.write_in_progress = true;
                 drop(st);
 
                 // WAL append + memtable insert without the state lock: only
@@ -492,6 +555,7 @@ impl Inner {
                 self.stats.writes.fetch_add(group as u64, Ordering::Relaxed);
 
                 st = self.state.lock().unwrap();
+                st.write_in_progress = false;
                 match r {
                     Ok(()) => {
                         // Publish: readers may now see this group.
@@ -582,7 +646,10 @@ impl Inner {
     /// Freezes the active memtable and starts a new WAL file.
     fn switch_memtable<'a>(&'a self, mut st: Guard<'a>) -> Result<Guard<'a>> {
         let num = st.versions.new_file_number();
-        let new_wal = LogWriter::create(&log_path(&self.dir, num))?;
+        let new_wal = LogWriter::create(&*self.opts.fs, &log_path(&self.dir, num))?;
+        // The new WAL's directory entry must be durable before synced
+        // writes are acknowledged from it (audit defect D7).
+        self.opts.fs.sync_dir(&self.dir)?;
         {
             let mut wal = self.wal.lock().unwrap();
             wal.flush(true)?; // old log fully durable before we stop writing it
@@ -739,7 +806,7 @@ impl Inner {
             Ok(o) => o,
             Err(e) => {
                 for n in nums {
-                    let _ = std::fs::remove_file(table_path(&self.dir, n));
+                    let _ = self.opts.fs.remove_file(&table_path(&self.dir, n));
                 }
                 return Err((st, e));
             }
@@ -776,13 +843,12 @@ impl Inner {
 
     fn delete_obsolete_logs(&self, st: &State) {
         let keep_from = st.versions.log_number;
-        if let Ok(rd) = std::fs::read_dir(&self.dir) {
-            for e in rd.flatten() {
-                if let Some(name) = e.file_name().to_str()
-                    && let Some((n, "log")) = parse_file_name(name)
+        if let Ok(names) = self.opts.fs.list_dir(&self.dir) {
+            for name in names {
+                if let Some((n, "log")) = parse_file_name(&name)
                     && n < keep_from
                 {
-                    let _ = std::fs::remove_file(e.path());
+                    let _ = self.opts.fs.remove_file(&self.dir.join(&name));
                 }
             }
         }
@@ -800,11 +866,8 @@ impl Inner {
             .flatten()
             .map(|f| f.number)
             .collect();
-        if let Ok(rd) = std::fs::read_dir(&self.dir) {
-            for e in rd.flatten() {
-                let Some(name) = e.file_name().to_str().map(|s| s.to_string()) else {
-                    continue;
-                };
+        if let Ok(names) = self.opts.fs.list_dir(&self.dir) {
+            for name in names {
                 let remove = if let Some((n, ext)) = parse_file_name(&name) {
                     match ext {
                         "sst" => !live.contains(&n),
@@ -819,11 +882,41 @@ impl Inner {
                 } else {
                     false
                 };
-                if remove {
-                    let _ = std::fs::remove_file(e.path());
+                if remove && name.ends_with(".sst") && st.versions.manifest_tail_dropped {
+                    // The torn MANIFEST record may have been the only
+                    // reference; keep the table aside for manual repair.
+                    let p = self.dir.join(&name);
+                    let _ = self
+                        .opts
+                        .fs
+                        .rename(&p, &self.dir.join(format!("{name}.lost")));
+                } else if remove {
+                    let _ = self.opts.fs.remove_file(&self.dir.join(&name));
                 }
             }
         }
+    }
+}
+
+/// An empty iterator that reports an error, standing in for a table that
+/// could not be opened.
+struct ErrorIterator(String);
+
+impl InternalIterator for ErrorIterator {
+    fn valid(&self) -> bool {
+        false
+    }
+    fn seek_to_first(&mut self) {}
+    fn seek(&mut self, _target: &[u8]) {}
+    fn next(&mut self) {}
+    fn key(&self) -> &[u8] {
+        unreachable!("ErrorIterator is never valid")
+    }
+    fn value(&self) -> &[u8] {
+        unreachable!("ErrorIterator is never valid")
+    }
+    fn status(&self) -> Result<()> {
+        Err(Error::Corruption(self.0.clone()))
     }
 }
 

@@ -1,0 +1,57 @@
+    Finished `release` profile [optimized] target(s) in 0.08s
+     Running unittests src/lib.rs (target/release/deps/lsm_engine-9ba4ad114f31cb9b)
+
+running 9 tests
+test coding::tests::varint_roundtrip ... ok
+test cache::tests::evicts_lru ... ok
+test block::tests::build_and_seek ... ok
+test key::tests::ordering ... ok
+test bloom::tests::no_false_negatives_and_low_fp_rate ... ok
+test version::tests::edit_roundtrip ... ok
+test log::tests::roundtrip_and_torn_tail ... ok
+test sstable::tests::detects_corruption ... ok
+test sstable::tests::build_read_iterate ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/bin/lsmctl.rs (target/release/deps/lsmctl-0b571332018a36ff)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/crash.rs (target/release/deps/crash-56dbfae6b39ed80a)
+
+running 1 test
+test survives_sigkill ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.06s
+
+     Running tests/db.rs (target/release/deps/db-3bf6fac77282478b)
+
+running 10 tests
+test basic_ops ... ok
+test detects_corrupted_table_on_read ... ok
+test recovers_from_wal_without_flush ... ok
+test scan_ranges ... ok
+test concurrent_readers_and_writers ... ok
+test snapshots_survive_compaction ... ok
+test write_batch_is_atomic_and_ordered ... ok
+test many_keys_across_levels_and_reopen ... ok
+test tombstones_reclaim_space ... ok
+test behaves_like_btreemap ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.13s
+
+   Doc-tests lsm_engine
+
+running 1 test
+test src/lib.rs - (line 3) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.34s; merged doctests compilation took 0.34s
+
+real	0m7.528s
+user	0m0.856s
+sys	0m2.181s

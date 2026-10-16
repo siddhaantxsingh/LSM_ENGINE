@@ -1,505 +1,109 @@
-<div align="center">
-<h1>LSM Engine</h1>
+# LSM Engine
 
-<h3>An embeddable LSM-tree key-value storage engine written from scratch in Rust.</h3>
+An LSM-tree key-value storage engine written from scratch in Rust, with a
+C API. WAL -> memtable -> L0 SSTables -> leveled compaction, MVCC
+snapshots, group commit, bloom filters, a sharded block cache.
 
-<p>
-<img src="https://img.shields.io/badge/Rust-DEA584?style=for-the-badge&logo=rust&logoColor=black">
-<img src="https://img.shields.io/badge/LSM-Storage%20Engine-6A5ACD?style=for-the-badge">
-<img src="https://img.shields.io/badge/WAL-CRC32%20%2B%20Recovery-FF8C00?style=for-the-badge">
-<img src="https://img.shields.io/badge/MVCC-Snapshots-2E8B57?style=for-the-badge">
-<img src="https://img.shields.io/badge/C%20ABI-Embeddable-1E90FF?style=for-the-badge">
-</p>
-**WAL → MemTable → Immutable MemTable → SSTables → Leveled Compaction**
-</div>
+Not production-ready. This is a learning and portfolio project with a
+serious test suite. The 2026-10-14 audit is in
+[`docs/AUDIT_2026-10-14.md`](docs/AUDIT_2026-10-14.md); all numbers below
+have logs in [`docs/evidence/2026-10-14/`](docs/evidence/2026-10-14/).
 
-------------------------------------------------------------------------
+## Layout
 
-## ✦ Why build another storage engine?
-
-Because storage engines hide an enormous amount of systems engineering
-behind a tiny API:
-
-``` rust
-db.put(key, value)?;
-db.get(key)?;
-db.scan(...)?;
+```
+lsm-engine/      the engine (Rust crate) and lsmctl CLI
+  src/fs.rs      FileSystem trait; StdFs (real) and SimFs (power-loss simulator)
+  tests/         regressions, crash_sim, corruption, model, db, crash (SIGKILL)
+capi/            C API: include/lsm.h, Rust cdylib/staticlib, C test program
+bench-compare/   benchmark vs RocksDB, sled and a BTreeMap (not built by CI)
+scripts/         mutation_check.sh
+docs/            audit, requirements matrix, owner actions, evidence logs
 ```
 
-Underneath that API are questions about:
+Design notes: [`lsm-engine/DESIGN.md`](lsm-engine/DESIGN.md).
 
--   crash consistency
--   file formats
--   corruption
--   write ordering
--   compaction
--   read amplification
--   metadata recovery
--   concurrent writers
--   snapshots
--   cache behavior
--   resource limits
+## Quick start
 
-`lsm-engine` implements those mechanisms from scratch in Rust and
-documents the bugs discovered while hardening them.
-
-------------------------------------------------------------------------
-
-## 🧭 Architecture
-
-``` mermaid
-flowchart TB
-    W["Put / WriteBatch"] --> Q["Writer / Group Commit"]
-    Q --> WAL[("WAL")]
-    Q --> M["MemTable"]
-
-    M -->|"full"| I["Immutable MemTable"]
-    I --> L0[("L0 SSTables")]
-
-    L0 --> L1[("L1")]
-    L1 --> L2[("L2")]
-    L2 --> L3["..."]
-    L3 --> L6[("L6")]
-
-    R["Get / Scan"] --> M
-    R --> I
-    R --> L0
-    R --> L1
-    R --> L2
-
-    MAN[("MANIFEST")] -. "live file set" .-> L0
-    MAN -. "version edits" .-> L1
-    MAN -. "version edits" .-> L2
-```
-
-### Write lifecycle
-
-``` mermaid
-sequenceDiagram
-    participant C as Caller
-    participant W as Writer
-    participant M as MemTable
-    participant D as Disk
-
-    C->>W: Put / WriteBatch
-    W->>D: Append WAL record
-    W->>D: fsync
-    W->>M: Apply batch
-    W-->>C: Success
-    M->>D: Flush to SSTable
-```
-
-The WAL is the durability boundary for acknowledged synchronous writes.
-
-------------------------------------------------------------------------
-
-## 🔎 Read path
-
-``` mermaid
-flowchart LR
-    A["Get / Scan"] --> B{"Active MemTable"}
-    B -->|hit| R["Return"]
-    B -->|miss| C{"Immutable MemTable"}
-    C -->|hit| R
-    C -->|miss| D{"Bloom filter"}
-    D -->|negative| E["Not found"]
-    D -->|possible| F["SSTable block/index"]
-    F --> R
-```
-
-The read path combines:
-
--   ordered MemTable lookup
--   immutable MemTable lookup
--   Bloom filters
--   block indexes
--   prefix-compressed blocks
--   sharded LRU block cache
--   merged iteration
--   MVCC filtering
-
-------------------------------------------------------------------------
-
-## 🧱 SSTable format
-
-``` mermaid
-flowchart TB
-    H["SSTable"] --> D["Data blocks"]
-    H --> I["Index"]
-    H --> F["Bloom filter"]
-    H --> T["Footer / metadata"]
-
-    D --> P["Prefix compression"]
-    D --> RP["Restart points"]
-    D --> CRC["Per-block CRC"]
-```
-
-Every on-disk structure is bounds-checked before use.
-
-Malformed metadata is expected to become an explicit error, not an
-allocator catastrophe or silent wrong answer.
-
-------------------------------------------------------------------------
-
-## 🧬 MVCC snapshots
-
-``` text
-user key
-   ↓
-internal key = user key + sequence + type
-   ↓
-versioned ordering
-   ↓
-snapshot sequence
-   ↓
-visible value
-```
-
-Example:
-
-``` rust
-let db = Db::open("/tmp/db", Options::default())?;
-
-db.put(b"user:42", b"Ada")?;
-
-let snap = db.snapshot();
-
-db.delete(b"user:42")?;
-
-assert_eq!(
-    db.get_opt(
-        b"user:42",
-        ReadOptions { snapshot: Some(&snap) }
-    )?,
-    Some(b"Ada".to_vec())
-);
-```
-
-Snapshots provide point-in-time reads without copying the entire
-database.
-
-------------------------------------------------------------------------
-
-## 🔥 Compaction
-
-``` mermaid
-flowchart LR
-    L0["L0<br/>overlapping"] --> C1["Pick compaction"]
-    C1 --> M["Merge sorted streams"]
-    M --> G["Apply MVCC / tombstone rules"]
-    G --> O["Write new SSTables"]
-    O --> F["Fsync + metadata update"]
-    F --> N["Install new version"]
-    N --> X["Delete obsolete files safely"]
-```
-
-Leveled compaction uses approximately 10× level-size targets, trivial
-moves, compact pointers, and tombstone garbage collection.
-
-The MANIFEST is treated as critical metadata rather than a best-effort
-log.
-
-------------------------------------------------------------------------
-
-## 🧨 Crash consistency
-
-The engine explicitly distinguishes:
-
-``` text
-Crash-torn tail
-       vs.
-Mid-log corruption
-       vs.
-Valid log
-```
-
-Recovery modes include:
-
--   `TolerateCorruptedTail`
--   `AbsoluteConsistency`
--   `PointInTime`
-
-The final hardening pass fixed a bug where mid-WAL damage could silently
-drop synced writes.
-
-It also added directory fsyncs around creation of new WAL/SST files.
-
-------------------------------------------------------------------------
-
-## 🛡️ Metadata safety
-
-One of the hardest audit findings involved the MANIFEST.
-
-A corrupted or truncated MANIFEST could make newer SSTables appear
-obsolete.
-
-The hardened engine now refuses unsafe recovery instead of deleting
-tables based on incomplete metadata.
-
-``` mermaid
-flowchart TD
-    A["Open DB"] --> B["Read CURRENT"]
-    B --> C["Replay MANIFEST"]
-    C --> D{"Version history coherent?"}
-    D -->|Yes| E["Install Version"]
-    D -->|No| F["FAIL SAFE"]
-    F --> G["Keep existing SSTables"]
-```
-
-This is a deliberate design choice:
-
-> **When metadata is ambiguous, refusing to open is safer than deleting
-> data.**
-
-------------------------------------------------------------------------
-
-## 🧪 Correctness testing
-
-The final verification includes:
-
-  Check                                                  Result
-  ------------------------------ ------------------------------
-  Rust tests                                   **47 / 47 PASS**
-  Model-based tests                                    **PASS**
-  Snapshot + batch model tests                         **PASS**
-  Mutation testing                                     **PASS**
-  SIGKILL crash test               **PASS, 3 consecutive runs**
-  Decoder robustness                                   **PASS**
-  C ABI round-trip                                     **PASS**
-  `cargo audit`                           **0 vulnerabilities**
-  `cargo fmt --check`                                  **PASS**
-  `cargo clippy -D warnings`                           **PASS**
-
-### Model-based testing
-
-Random sequences of:
-
-``` text
-put
-delete
-get
-scan
-flush
-compact
-reopen
-snapshot
-WriteBatch
-```
-
-are compared against a reference `BTreeMap`.
-
-### Mutation testing
-
-Real SST and MANIFEST bytes are flipped/truncated.
-
-The required outcome is:
-
-``` text
-correct value
-      OR
-explicit error
-
-NEVER:
-wrong value
-silent missing data
-silent incomplete scan
-```
-
-------------------------------------------------------------------------
-
-## 🐛 Bugs found during hardening
-
-The repository preserves the engineering history.
-
-### Critical: flush/write race
-
-A concurrent `flush()` could race the write leader and lose an
-acknowledged write.
-
-**Fixed + regression tested.**
-
-### High: corrupt SST footer
-
-Malformed metadata could trigger an attempted **1 TiB allocation**.
-
-**Fixed + regression tested.**
-
-### High: mid-WAL damage
-
-Synced writes after corruption could be silently dropped.
-
-**Fixed + recovery tests added.**
-
-### Critical: corrupted MANIFEST
-
-An empty/truncated MANIFEST could make the engine delete valid SSTables.
-
-**Fixed + fail-safe recovery tests added.**
-
-This is the kind of debugging work that makes the project more than a
-data-structure exercise.
-
-------------------------------------------------------------------------
-
-## 📈 Performance
-
-Recorded on a noisy **2-vCPU cloud VM**, 1M keys, 16-byte keys, 100-byte
-values, `sync=false`, 2 threads.
-
-  Benchmark                               Throughput Latency
-  ----------------------- -------------------------- ------------------------
-  `fillseq`                     **240k--248k ops/s** ---
-  `fillrandom`                  **108k--126k ops/s** p50 3.9 µs · p99 71 µs
-  `readrandom`                  **320k--423k ops/s** p50 5.3 µs · p99 22 µs
-  `readmissing` + Bloom       **1.70M--1.83M ops/s** ---
-  `readseq`                     **3.1M--3.7M ops/s** ---
-  seek + 100-row scan       **20.8k--23.7k scans/s** p50 48 µs
-  Write amplification                      **4.62×** ---
-
-### Synchronous group commit
-
-``` text
-1 writer   → ~4.3k ops/s
-32 writers → ~29.4k ops/s
-```
-
-The 32-writer workload achieved roughly **19 writes per fsync**.
-
-These are same-machine engineering measurements, not production capacity
-claims.
-
-------------------------------------------------------------------------
-
-## 🔌 C ABI
-
-The engine exposes an embeddable C ABI:
-
-``` text
-Rust storage engine
-        │
-        ├── native Rust API
-        │
-        └── C ABI
-              │
-              ▼
-          Go systems
-```
-
-The C ABI is used by the companion Raft KV project as its persistent
-state-store backend.
-
-------------------------------------------------------------------------
-
-## 🚀 Quick start
-
-``` bash
+```bash
+cd lsm-engine
 cargo test --release
-```
-
-CLI:
-
-``` bash
 cargo run --release --bin lsmctl -- /tmp/db put hello world
 cargo run --release --bin lsmctl -- /tmp/db get hello
 cargo run --release --bin lsmctl -- /tmp/db scan
+cd ../capi && ./run_c_tests.sh     # C API: plain, ASan+UBSan, valgrind
 ```
 
-Benchmark:
+Scans return `Result` items. If a read error stops a scan early, the last
+item is an `Err`, so an incomplete scan is never mistaken for a complete
+one:
 
-``` bash
-cargo run --release --bin lsmctl -- \
-  /tmp/bench bench --num 1000000 --threads 2
-
-cargo run --release --bin lsmctl -- \
-  /tmp/bench bench --sync-only --threads 32
+```rust
+for item in db.scan(Some(b"a"), Some(b"z"), ReadOptions::default()) {
+    let (k, v) = item?;
+}
 ```
 
-------------------------------------------------------------------------
+## What is tested
 
-## 📁 Repository map
+| Test | What it checks |
+|---|---|
+| `tests/crash_sim.rs` | Power loss before every file-system operation (create, append, fsync, rename, remove, directory fsync) of a workload with flushes and compactions, under 5 durability modes (unsynced data dropped / torn / zero-filled / kept; directory entries dropped / kept). Recovery must equal the model after k writes, with every acknowledged synced write present. A second crash is injected into recovery itself. 6,055 crash images. |
+| `tests/corruption.rs` | 9,247 single-bit flips across SST, WAL, MANIFEST and CURRENT files. Every outcome is an error or correct data; never a wrong value, a silently missing key, or a silently short scan. |
+| `tests/model.rs` | proptest against a `BTreeMap` model: puts, deletes, batches, gets, range scans, snapshot reads and scans, flush, compaction, reopen. |
+| `tests/regressions.rs` | One failing-first test per audit defect (D1-D10). |
+| `tests/crash.rs` | SIGKILL of a real process mid-write/flush/compaction, 5 rounds. |
+| `capi/` | NULL/length checks, ownership, panics caught at the boundary; Rust tests also run under Miri; the C program runs under ASan+UBSan and valgrind (0 errors, 0 leaks). |
+| `scripts/mutation_check.sh` | Injects 14 known bugs; 11 were caught in the recorded run (see audit for the 3 survivors). |
 
-``` text
-src/
-├── db.rs
-├── memtable.rs
-├── log.rs
-├── sstable.rs
-├── block.rs
-├── bloom.rs
-├── cache.rs
-├── version.rs
-├── compaction.rs
-├── iterator.rs
-├── key.rs
-└── options.rs
+`SimFs` models strict POSIX durability in memory. It is not a real power
+cut; see [`docs/OWNER_ACTIONS.md`](docs/OWNER_ACTIONS.md).
 
-tests/
-├── crash.rs
-├── corruption.rs
-├── model.rs
-└── db.rs
+## Recovery behaviour
 
-capi/
-├── include/lsm.h
-└── src/lib.rs
+- MANIFEST: a torn last record (crash during an append) is dropped. Any
+  other damage, an empty MANIFEST, an incoherent history, or a live table
+  that is missing or has the wrong size makes `Db::open` fail. Nothing is
+  deleted before the MANIFEST checks out. Tables orphaned by a dropped
+  torn record are renamed `*.sst.lost`, not deleted.
+- WAL, `WalRecoveryMode`:
+  - `TolerateCorruptedTail` (default): drop a torn tail of the newest WAL
+    that has data; anything else is an error. Limitation: a bit flip in
+    the payload of the very last record looks like a torn write and that
+    record is dropped.
+  - `AbsoluteConsistency`: any damage is an error.
+  - `PointInTime`: replay up to the first damage, ignore the rest.
+- Log record format: `len | crc(len) | crc(payload) | payload | 0xA5`,
+  files start with the magic `LSMLOG\0\2`. This changed in the audit;
+  older databases cannot be opened.
 
-docs/
-├── durability
-├── performance
-├── security
-├── ADRs
-└── audits
-```
+## Benchmarks
 
-\~5.7k lines of Rust including tests.
+`bench-compare`, 300,000 random 16-byte keys, 100-byte values, single
+thread, no compression, bloom 10 bits/key. Median of 3 runs on a shared
+4-vCPU container (load average 8-11 from other jobs). Treat these as
+rough same-machine comparisons; they vary up to ~2x between runs. Full
+log: `docs/evidence/2026-10-14/bench_compare.log`.
 
-------------------------------------------------------------------------
+| | lsm-engine | RocksDB 10.4.2 | sled 0.34 | BTreeMap (memory) |
+|---|---|---|---|---|
+| fillrandom (ops/s) | 141k | 145k | 120k | 820k |
+| readrandom (ops/s) | 361k | 350k | 442k | 1.34M |
+| readmissing (ops/s) | 2.19M | 1.98M | 1.16M | 4.16M |
+| seek + 100 next (scans/s) | 37k | 52k | 18k | 433k |
+| fsync per write (ops/s) | 278 | 302 | see note | - |
+| disk bytes written / user bytes | 4.0x | 3.9-4.1x | 2.9-3.3x | - |
+| disk size after compaction | 21 MB | 21 MB | 62 MB | - |
 
-## 📚 Documentation
+The data set is small (35 MB) and mostly cached, so this does not show
+how either engine behaves on large data. The sled synced-write numbers
+(298-9,669 ops/s) suggest `flush()` did not always reach the disk and
+are not comparable. RocksDB ran with near-default options matched to
+this engine's sizes.
 
-  ------------------------------------------------------------------------------------------------------------------
-  Area                                Link
-  ----------------------------------- ------------------------------------------------------------------------------
-  Design                              [`DESIGN.md`](DESIGN.md)
+## Limitations
 
-  Durability                          [`docs/LSM_DURABILITY_AND_RECOVERY.md`](docs/LSM_DURABILITY_AND_RECOVERY.md)
-
-  Performance                         [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)
-
-  Security                            [`docs/SECURITY.md`](docs/SECURITY.md)
-
-  Interview guide                     [`docs/INTERVIEW.md`](docs/INTERVIEW.md)
-
-  Final audit                         [`docs/FINAL_AUDIT.md`](docs/FINAL_AUDIT.md)
-
-  Architecture audit                  [`docs/COMBINED_ARCHITECTURE_AUDIT.md`](docs/COMBINED_ARCHITECTURE_AUDIT.md)
-
-  ADRs                                [`docs/adr/`](docs/adr/)
-  ------------------------------------------------------------------------------------------------------------------
-
-------------------------------------------------------------------------
-
-## 🚧 Honest limitations
-
-Not production-ready.
-
-Known gaps:
-
--   no power-loss filesystem fault injection
--   no coverage-guided fuzzing campaign
--   limited compaction parallelism
--   no compression codec
--   limited metrics/tracing
--   no backup/repair subsystem
--   one background compaction worker
-
-The project is intended as a **carefully tested storage-engine
-implementation**, not a replacement for RocksDB.
-
-------------------------------------------------------------------------
-
-<div align="center">
-### A storage engine is a promise about data.
-
-### The interesting engineering starts when the disk, metadata, and process stop behaving nicely.
-</div>
+- Not tested on real power loss or real disk faults.
+- No compression, one background thread, no bounded table cache, no
+  range deletes, no coverage-guided fuzzing.
+- Memtable iterators copy the memtable.

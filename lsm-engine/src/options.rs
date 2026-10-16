@@ -1,4 +1,6 @@
+use crate::fs::{FileSystem, StdFs};
 use crate::sstable::TableOptions;
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -22,6 +24,28 @@ pub struct Options {
     /// fsync the WAL on every write (durable across power loss).
     pub sync: bool,
     pub table: TableOptions,
+    /// File system used for every file. Defaults to the real one.
+    pub fs: Arc<dyn FileSystem>,
+    /// What to do with damaged WAL files on open.
+    pub wal_recovery_mode: WalRecoveryMode,
+}
+
+/// How `Db::open` treats WAL files that do not end cleanly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum WalRecoveryMode {
+    /// Default. A torn tail (what a crash during an append leaves) is
+    /// dropped, but only in the newest WAL that has records. Corruption
+    /// followed by more data, or a torn tail in an older WAL, is an error.
+    /// Limitation: a bit flip inside the payload of the very last record
+    /// looks the same as a torn write and is dropped.
+    #[default]
+    TolerateCorruptedTail,
+    /// Any WAL that does not end cleanly is an error.
+    AbsoluteConsistency,
+    /// Replay up to the first damaged record and ignore everything after
+    /// it, including later WAL files. Opt-in data loss for recovering a
+    /// damaged database.
+    PointInTime,
 }
 
 impl Default for Options {
@@ -38,6 +62,8 @@ impl Default for Options {
             block_cache_size: 8 << 20,
             sync: false,
             table: TableOptions::default(),
+            fs: Arc::new(StdFs),
+            wal_recovery_mode: WalRecoveryMode::default(),
         }
     }
 }
